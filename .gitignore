@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+*.o
+*.d
+
+# Compiled binaries
+lob_engine
+lob_engine_debug
+lob_engine_opt
+lob_engine_ubsan
+
+# macOS debug symbol bundles
+*.dSYM/
+
+# Clangd compilation database (symlink into build/)
+compile_commands.json
+
+# Clangd index cache
+.cache/
+
+# ITCH binary data files (too large for GitHub)
+data/
+
+# Claude Code project settings
+.claude/
+
+# macOS metadata
+.DS_Store
