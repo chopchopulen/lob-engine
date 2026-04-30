@@ -181,17 +181,91 @@ def depth_informativeness(feature_dir: str):
     return results
 
 
+# ── Research Question 4: Cross-Asset OFI ─────────────────────────────
+
+def cross_asset_ofi(combined_csv: str):
+    """
+    Q4: Does SPY OFI lead AAPL 1-second returns at lag-1 and lag-2?
+
+    Models:
+      1. AAPL OFI (current)              → AAPL fwd_ret_1s   [baseline]
+      2. SPY OFI lagged 1s               → AAPL fwd_ret_1s
+      3. SPY OFI lagged 2s               → AAPL fwd_ret_1s
+      4. AAPL OFI + SPY lag-1            → AAPL fwd_ret_1s
+      5. AAPL OFI + SPY lag-1 + SPY lag-2 → AAPL fwd_ret_1s
+    """
+    df = pd.read_csv(combined_csv)
+    df['ts'] = pd.to_datetime(df['ts'], unit='ns')
+    df.set_index('ts', inplace=True)
+
+    # Infer ticker names from column names: first two cols are {t1}_mid, {t1}_ofi
+    cols = list(df.columns)  # [t1_mid, t1_ofi, t2_mid, t2_ofi]
+    t1_mid, t1_ofi, t2_mid, t2_ofi = cols[0], cols[1], cols[2], cols[3]
+    t1 = t1_mid.replace('_mid', '').upper()
+    t2 = t2_mid.replace('_mid', '').upper()
+
+    # Forward return: what we're predicting (ticker1, 1-second horizon)
+    df['t1_fwd_ret'] = df[t1_mid].pct_change().shift(-1)
+
+    # Lagged predictors
+    df['t2_ofi_lag1'] = df[t2_ofi].shift(1)
+    df['t2_ofi_lag2'] = df[t2_ofi].shift(2)
+
+    # Mask: require all features and target to be non-null
+    mask = df[['t1_fwd_ret', t1_ofi, 't2_ofi_lag1', 't2_ofi_lag2']].notna().all(axis=1)
+    y    = df.loc[mask, 't1_fwd_ret'].values
+    n    = mask.sum()
+
+    print(f"\n=== Q4: Cross-Asset OFI ({t2} OFI → {t1} 1s Returns) ===")
+    print(f"  N={n}  N_train={int(n*0.7)}  N_test={n - int(n*0.7)}\n")
+
+    models = [
+        (f"{t1} OFI (baseline)",
+         df.loc[mask, t1_ofi].values.reshape(-1, 1)),
+        (f"{t2} OFI lag-1",
+         df.loc[mask, 't2_ofi_lag1'].values.reshape(-1, 1)),
+        (f"{t2} OFI lag-2",
+         df.loc[mask, 't2_ofi_lag2'].values.reshape(-1, 1)),
+        (f"{t1} OFI + {t2} lag-1",
+         np.column_stack([df.loc[mask, t1_ofi].values,
+                          df.loc[mask, 't2_ofi_lag1'].values])),
+        (f"{t1} OFI + {t2} lag-1 + lag-2",
+         np.column_stack([df.loc[mask, t1_ofi].values,
+                          df.loc[mask, 't2_ofi_lag1'].values,
+                          df.loc[mask, 't2_ofi_lag2'].values])),
+    ]
+
+    baseline_r2_out = None
+    for name, X in models:
+        m, r2_in, r2_out = _run_regression(X, y)
+        if baseline_r2_out is None:
+            delta_str = ""
+            baseline_r2_out = r2_out
+        else:
+            delta = r2_out - baseline_r2_out
+            delta_str = f"  Δ={delta:+.4f} vs baseline"
+        print(f"  {name:<40}  R²_in={r2_in:.4f}  R²_out={r2_out:.4f}{delta_str}")
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python analysis.py <features.csv> [--depth-dir <dir>]")
+        print("Usage: python analysis.py <features.csv> [--depth-dir <dir>] [--cross <combined.csv>] [--decay <amzn_features.csv>]")
         sys.exit(1)
 
     feature_file = sys.argv[1]
     depth_dir = None
     if '--depth-dir' in sys.argv:
         depth_dir = sys.argv[sys.argv.index('--depth-dir') + 1]
+
+    cross_csv = None
+    if '--cross' in sys.argv:
+        idx = sys.argv.index('--cross')
+        if idx + 1 >= len(sys.argv):
+            print("Error: --cross requires a path argument")
+            sys.exit(1)
+        cross_csv = sys.argv[idx + 1]
 
     print(f"Loading features from: {feature_file}")
     df = load_features(feature_file)
@@ -210,6 +284,9 @@ def main():
     else:
         print("\n=== Q3: Depth-of-Book Informativeness ===")
         print("  Skipped — pass --depth-dir <dir> with features_depth{1,5,10}.csv")
+
+    if cross_csv:
+        cross_asset_ofi(cross_csv)
 
 
 if __name__ == '__main__':
