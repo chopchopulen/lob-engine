@@ -249,6 +249,85 @@ def cross_asset_ofi(combined_csv: str):
         print(f"  {name:<40}  R²_in={r2_in:.4f}  R²_out={r2_out:.4f}{coef_str}{delta_str}")
 
 
+# ── Addition 2: Multi-Frequency Signal Decay ──────────────────────────
+
+def signal_decay(ticker1_csv: str, ticker2_csv: str):
+    """
+    Resample 1s feature CSVs to 1/5/10/30/60s, run OFI→fwd_ret regression
+    at each horizon, and save results/signal_decay.png.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    horizons = [1, 5, 10, 30, 60]
+
+    def ticker_label(path):
+        return Path(path).stem.replace('features_', '').upper()
+
+    results = {}
+
+    print("\n=== Addition 2: OFI Signal Decay by Aggregation Horizon ===")
+
+    for path in [ticker1_csv, ticker2_csv]:
+        label = ticker_label(path)
+        df = load_features(path)
+        results[label] = {}
+        print(f"\n  {label}:")
+
+        for h in horizons:
+            agg = df[['ofi', 'mid_price']].resample(f'{h}s').agg(
+                {'ofi': 'sum', 'mid_price': 'last'}
+            ).dropna()
+
+            agg = agg.copy()
+            agg['fwd_ret'] = agg['mid_price'].pct_change().shift(-1)
+            mask = agg[['ofi', 'fwd_ret']].notna().all(axis=1)
+
+            if mask.sum() < 50:
+                print(f"    {h:2d}s: insufficient data ({mask.sum()} obs) — skipped")
+                continue
+
+            X = agg.loc[mask, 'ofi'].values.reshape(-1, 1)
+            y = agg.loc[mask, 'fwd_ret'].values
+            _, _, r2_out = _run_regression(X, y)
+            results[label][h] = r2_out
+            print(f"    {h:2d}s  N={mask.sum():5d}  R²_out={r2_out:.4f}")
+
+    # ── Plot ──────────────────────────────────────────────────────────
+    Path('results').mkdir(exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    color_map = {'AAPL': 'steelblue', 'AMZN': 'darkorange'}
+    fallback_colors = ['#e41a1c', '#4daf4a', '#984ea3', '#ff7f00']
+    fallback_idx = 0
+
+    for label, res in results.items():
+        if not res:
+            continue
+        hs  = sorted(res.keys())
+        r2s = [res[h] for h in hs]
+        if label in color_map:
+            color = color_map[label]
+        else:
+            color = fallback_colors[fallback_idx % len(fallback_colors)]
+            fallback_idx += 1
+        ax.plot(hs, r2s, marker='o', color=color, label=label, linewidth=2, markersize=6)
+
+    ax.axhline(0, color='black', linewidth=0.8, linestyle='--', alpha=0.5, label='R²=0')
+    ax.set_xscale('log')
+    ax.set_xticks(horizons)
+    ax.set_xticklabels([f'{h}s' for h in horizons])
+    ax.set_xlabel('Aggregation horizon (log scale)')
+    ax.set_ylabel('Out-of-sample R²')
+    ax.set_title('OFI Predictive Power vs. Aggregation Horizon')
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig('results/signal_decay.png', dpi=150)
+    plt.close(fig)
+    print("\n  Saved: results/signal_decay.png")
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
@@ -289,6 +368,17 @@ def main():
 
     if cross_csv:
         cross_asset_ofi(cross_csv)
+
+    decay_csv = None
+    if '--decay' in sys.argv:
+        idx = sys.argv.index('--decay')
+        if idx + 1 >= len(sys.argv):
+            print("Error: --decay requires a path argument")
+            sys.exit(1)
+        decay_csv = sys.argv[idx + 1]
+
+    if decay_csv:
+        signal_decay(feature_file, decay_csv)
 
 
 if __name__ == '__main__':
