@@ -197,6 +197,7 @@ def cross_asset_ofi(combined_csv: str):
     df = pd.read_csv(combined_csv)
     df['ts'] = pd.to_datetime(df['ts'], unit='ns')
     df.set_index('ts', inplace=True)
+    df = df.resample('1s').last()  # uniform grid — shift() is now exactly 1 second
 
     # Infer ticker names from column names: first two cols are {t1}_mid, {t1}_ofi
     cols = list(df.columns)  # [t1_mid, t1_ofi, t2_mid, t2_ofi]
@@ -238,13 +239,14 @@ def cross_asset_ofi(combined_csv: str):
     baseline_r2_out = None
     for name, X in models:
         m, r2_in, r2_out = _run_regression(X, y)
+        coef_str = f"  coef={m.coef_[0]:.3e}" if X.shape[1] == 1 else ""
         if baseline_r2_out is None:
             delta_str = ""
             baseline_r2_out = r2_out
         else:
             delta = r2_out - baseline_r2_out
             delta_str = f"  Δ={delta:+.4f} vs baseline"
-        print(f"  {name:<40}  R²_in={r2_in:.4f}  R²_out={r2_out:.4f}{delta_str}")
+        print(f"  {name:<40}  R²_in={r2_in:.4f}  R²_out={r2_out:.4f}{coef_str}{delta_str}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────
