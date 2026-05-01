@@ -140,6 +140,42 @@ AMZN's OFI signal — already small at 1 second — is completely gone by 10 sec
 
 ---
 
+### Research Question 4 — Cross-Asset OFI (SPY → AAPL)
+
+The hypothesis is that a large, liquid ETF such as SPY carries information about its constituent stocks before that information is fully incorporated into individual stock prices. If SPY order flow leads AAPL, then lagged SPY OFI should add predictive power over AAPL's own OFI for forecasting AAPL 1-second returns.
+
+Five models are compared on the matched cross-asset dataset (N=17,545 joint observations, 70/30 time-series split):
+
+| Model | Predictors | R²\_in | R²\_out | ΔR²\_out vs baseline |
+|---|---|---|---|---|
+| AAPL OFI (baseline) | AAPL OFI only | 0.02% | −0.87% | — |
+| SPY OFI lag-1 | SPY OFI (t−1) only | 0.05% | −1.56% | −0.70% |
+| SPY OFI lag-2 | SPY OFI (t−2) only | 0.22% | −8.82% | −7.96% |
+| AAPL OFI + SPY lag-1 | AAPL OFI + SPY (t−1) | 0.07% | −2.02% | −1.16% |
+| AAPL OFI + SPY lag-1+2 | AAPL OFI + SPY (t−1,t−2) | 0.23% | −9.12% | −8.25% |
+
+Adding lagged SPY OFI does not improve out-of-sample R² for AAPL — every cross-asset specification performs worse than the AAPL-only baseline. The SPY lag-2 model in particular shows a large positive in-sample R² (0.22%) alongside a steeply negative OOS R² (−8.82%), a clear overfitting signature. This result is consistent with markets where cross-asset information transmission between SPY and AAPL occurs at sub-second timescales faster than the 1-second aggregation window used here: by the time a 1-second SPY OFI bar is recorded, any predictive content for AAPL prices has already been arbitraged away. No evidence of a lagged lead-lag relationship is found at this frequency.
+
+---
+
+### Addition 2 — Multi-Frequency Signal Decay
+
+OFI is re-aggregated at five horizons (1s, 5s, 10s, 30s, 60s) and used to predict the corresponding forward return. This tests whether the OFI signal is more persistent for a less-liquid name (AMZN) relative to a hyper-liquid one (AAPL).
+
+| Horizon | AAPL R²\_out | AMZN R²\_out |
+|---|---|---|
+| 1s | −0.18% | +0.07% |
+| 5s | −0.50% | +0.23% |
+| 10s | −1.40% | −0.14% |
+| 30s | −0.72% | −2.03% |
+| 60s | +1.51% | −1.78% |
+
+![OFI Signal Decay](results/signal_decay.png)
+
+The results are consistent with the baseline findings but do not support the hypothesis of monotonically higher AMZN R² at short horizons relative to AAPL. AMZN does show positive OOS R² at 1s and 5s (the only positive values in the table), while AAPL is negative or near-zero across all horizons — consistent with AAPL's tighter spreads and faster arbitrage. However, both tickers deteriorate sharply by 10s and beyond, with R² becoming more negative at longer aggregations where sample size shrinks and noise dominates. The isolated +1.51% at 60s for AAPL is likely a sample-size artifact (N=959 test observations) rather than a genuine signal. Overall, any OFI predictability is confined to the 1–5 second window, and even there the effect is small and fragile.
+
+---
+
 ### Research Question 2 — Spread vs. Volatility Regimes (Glosten-Milgrom)
 
 The Glosten-Milgrom (1985) model predicts that market makers widen spreads in high-volatility regimes to compensate for increased adverse selection risk. To test this, observations are partitioned into quintiles by 5-minute rolling realized variance, and the average quoted spread is measured per quintile.
