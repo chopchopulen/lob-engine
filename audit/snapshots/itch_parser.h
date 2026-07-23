@@ -28,7 +28,6 @@ struct ParserCallbacks {
     std::function<void(const DeleteOrderMsg&)>  on_delete;
     std::function<void(const ReplaceOrderMsg&)> on_replace;
     std::function<void(const ExecuteOrderMsg&)> on_execute;
-    std::function<void(const CancelOrderMsg&)>  on_cancel;
 };
 
 class ItchParser {

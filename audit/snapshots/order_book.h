@@ -91,7 +91,6 @@ public:
     void replace_order(uint64_t ts, uint64_t old_ref, uint64_t new_ref,
                        uint32_t new_shares, uint32_t new_price);
     void execute_order(uint64_t ts, uint64_t order_ref, uint32_t executed_shares);
-    void cancel_order(uint64_t ts, uint64_t order_ref, uint32_t canceled_shares);
 
     BookSnapshot top_of_book(uint64_t ts) const;
 

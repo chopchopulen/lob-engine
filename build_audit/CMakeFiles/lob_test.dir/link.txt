@@ -1,0 +1,1 @@
+/usr/bin/c++ -O2 -Wall -Wextra -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/lob_test.dir/test/test_order_book.cpp.o CMakeFiles/lob_test.dir/src/book/order_book.cpp.o CMakeFiles/lob_test.dir/src/feed/itch_parser.cpp.o CMakeFiles/lob_test.dir/src/features/feature_engine.cpp.o -o lob_test

@@ -73,6 +73,11 @@ int main(int argc, char* argv[]) {
             ++msg_count;
             ++trade_count;
         };
+        cb.on_cancel = [&](const CancelOrderMsg& m) {
+            book.cancel_order(m.timestamp_ns, m.order_ref, m.canceled_shares);
+            features.on_book_update(book, m.timestamp_ns);
+            ++msg_count;
+        };
 
         auto t0 = std::chrono::steady_clock::now();
         try {
@@ -125,9 +130,7 @@ int main(int argc, char* argv[]) {
     ParserCallbacks cb;
 
     cb.on_add = [&](const AddOrderMsg& m) {
-        // m.stock is truncated to 4 chars by the parser (itch_parser.cpp:69).
-        // Tickers longer than 4 chars (e.g. GOOGL) will not match. All currently
-        // supported tickers (AAPL, SPY, AMZN) are 4 chars or fewer.
+        // m.stock holds the full (up to 8-char) ticker — see itch_parser.cpp.
         std::string stk(m.stock);
         if (stk == ticker1) {
             order_route[m.order_ref] = 0;
@@ -191,6 +194,21 @@ int main(int argc, char* argv[]) {
             book2.execute_order(m.timestamp_ns, m.order_ref, m.executed_shares);
             feat2.on_book_update(book2, m.timestamp_ns);
             ++cnt2; ++trade_cnt2;
+        }
+    };
+
+    cb.on_cancel = [&](const CancelOrderMsg& m) {
+        auto it = order_route.find(m.order_ref);
+        if (it == order_route.end()) return;
+        uint8_t idx = it->second;
+        if (idx == 0) {
+            book1.cancel_order(m.timestamp_ns, m.order_ref, m.canceled_shares);
+            feat1.on_book_update(book1, m.timestamp_ns);
+            ++cnt1;
+        } else {
+            book2.cancel_order(m.timestamp_ns, m.order_ref, m.canceled_shares);
+            feat2.on_book_update(book2, m.timestamp_ns);
+            ++cnt2;
         }
     };
 

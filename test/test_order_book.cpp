@@ -172,6 +172,28 @@ static void test_replace_order() {
     std::cout << "PASS test_replace_order\n";
 }
 
+// ── test_cancel_order ─────────────────────────────────────────────────────────
+static void test_cancel_order() {
+    OrderBook book("TEST");
+    book.add_order(1, 1, 'S', 100, 10000);
+
+    // Partial cancel: reduces shares but keeps the order/level alive.
+    book.cancel_order(2, 1, 30);
+    auto snap = book.top_of_book(3);
+    assert(snap.best_ask_price  == 10000);
+    assert(snap.best_ask_shares == 70);
+    assert(book.num_orders() == 1);
+
+    // Full cancel (canceled_shares >= remaining): removes the order/level.
+    book.cancel_order(4, 1, 999);
+    auto snap2 = book.top_of_book(5);
+    assert(snap2.best_ask_price == 0);
+    auto empty_levels = book.ask_levels(1);
+    assert(empty_levels.empty());
+    assert(book.num_orders() == 0);
+    std::cout << "PASS test_cancel_order\n";
+}
+
 int main() {
     test_basic_top_of_book();
     test_bid_levels_ordering();
@@ -182,6 +204,7 @@ int main() {
     test_overflow_and_promotion_asks();
     test_execute_order();
     test_replace_order();
-    std::cout << "\nAll 9 tests passed.\n";
+    test_cancel_order();
+    std::cout << "\nAll 10 tests passed.\n";
     return 0;
 }

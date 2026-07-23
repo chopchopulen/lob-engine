@@ -66,7 +66,7 @@ size_t ItchParser::parse_file(const std::string& path,
             m.order_ref    = read_u64(msg + 11);
             m.side         = (char)msg[19];
             m.shares       = read_u32(msg + 20);
-            strncpy(m.stock, stk8, 8); m.stock[8] = '\0';
+            strncpy(m.stock, stk8, 4); m.stock[4] = '\0';
             m.price        = read_u32(msg + 32);
             cb.on_add(m);
             ++count;
@@ -90,7 +90,7 @@ size_t ItchParser::parse_file(const std::string& path,
             m.order_ref    = read_u64(msg + 11);
             m.side         = (char)msg[19];
             m.shares       = read_u32(msg + 20);
-            strncpy(m.stock, stk8, 8); m.stock[8] = '\0';
+            strncpy(m.stock, stk8, 4); m.stock[4] = '\0';
             m.price        = read_u32(msg + 32);
             cb.on_add(m);
             ++count;
@@ -142,46 +142,6 @@ size_t ItchParser::parse_file(const std::string& path,
             m.order_ref       = read_u64(msg + 11);
             m.executed_shares = read_u32(msg + 19);
             cb.on_execute(m);
-            ++count;
-        }
-
-        // ── 'C' Order Executed With Price ─────────────────────────────
-        //  [0]     = 'C'
-        //  [5-10]  = timestamp
-        //  [11-18] = order_ref_num
-        //  [19-22] = executed_shares
-        //  [23-30] = match_number    (ignored — not needed downstream)
-        //  [31]    = printable       (ignored)
-        //  [32-35] = execution_price (ignored — book only tracks resting
-        //            price; this message type is for executions away from
-        //            the order's display price, but the share reduction +
-        //            trade count is what matters here)
-        // Functionally an execution (like 'E'): reduces/executes an order's
-        // shares. Reuses ExecuteOrderMsg + on_execute — OrderBook::execute_order
-        // only needs order_ref + executed_shares, and that path is already
-        // covered by test_execute_order in test_order_book.cpp.
-        else if (msg_type == 'C' && cb.on_execute) {
-            if (msg_len < 36) continue;
-            ExecuteOrderMsg m;
-            m.timestamp_ns    = read_u48(msg + 5);
-            m.order_ref       = read_u64(msg + 11);
-            m.executed_shares = read_u32(msg + 19);
-            cb.on_execute(m);
-            ++count;
-        }
-
-        // ── 'X' Order Cancel (partial) ───────────────────────────────
-        //  [0]     = 'X'
-        //  [5-10]  = timestamp
-        //  [11-18] = order_ref_num
-        //  [19-22] = canceled_shares
-        else if (msg_type == 'X' && cb.on_cancel) {
-            if (msg_len < 23) continue;
-            CancelOrderMsg m;
-            m.timestamp_ns     = read_u48(msg + 5);
-            m.order_ref        = read_u64(msg + 11);
-            m.canceled_shares  = read_u32(msg + 19);
-            cb.on_cancel(m);
             ++count;
         }
     }

@@ -172,18 +172,6 @@ void OrderBook::execute_order(uint64_t ts, uint64_t order_ref,
     if (o.shares == 0) orders_.erase(it);
 }
 
-void OrderBook::cancel_order(uint64_t ts, uint64_t order_ref,
-                              uint32_t canceled_shares) {
-    last_ts_ = ts;
-    auto it = orders_.find(order_ref);
-    if (it == orders_.end()) return;
-    Order& o = it->second;
-    uint32_t reduced = std::min(canceled_shares, o.shares);
-    remove_from_level(o.side, o.price, reduced);
-    o.shares -= reduced;
-    if (o.shares == 0) orders_.erase(it);
-}
-
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 BookSnapshot OrderBook::top_of_book(uint64_t ts) const {

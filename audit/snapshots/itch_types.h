@@ -9,13 +9,11 @@
 // Every message starts with a 1-byte "type" code, then fixed-size fields.
 // All multi-byte integers are big-endian (network byte order).
 //
-// We care about these message types:
+// We care about 4 message types:
 //   'A' = Add Order          (new order arrives at a price level)
 //   'D' = Delete Order       (order cancelled)
 //   'U' = Replace Order      (cancel + re-add at new price/qty)
 //   'E' = Order Executed     (trade happened — order partially/fully filled)
-//   'C' = Order Executed With Price (execution away from display price;
-//         shares/order_ref semantics identical to 'E' — see ExecuteOrderMsg)
 //
 // Full spec: https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/NQTVITCHspecification.pdf
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,7 +55,7 @@ struct AddOrderMsg {
     uint64_t order_ref;      // unique order ID assigned by exchange
     char     side;           // 'B' = buy, 'S' = sell
     uint32_t shares;         // number of shares
-    char     stock[9];       // ticker symbol (ITCH 5.0 max is 8 chars + NUL)
+    char     stock[5];       // ticker symbol
     uint32_t price;          // price in units of 1/10000 dollar (e.g. 1500000 = $150.00)
 };
 
@@ -83,13 +81,4 @@ struct ExecuteOrderMsg {
     uint64_t timestamp_ns;
     uint64_t order_ref;
     uint32_t executed_shares;
-};
-
-// Parsed from 'X' message (23 bytes total)
-// Order Cancel — a PARTIAL cancel (reduces shares), distinct from 'D' Delete
-// (which removes the order entirely). No trade occurs.
-struct CancelOrderMsg {
-    uint64_t timestamp_ns;
-    uint64_t order_ref;
-    uint32_t canceled_shares;
 };
