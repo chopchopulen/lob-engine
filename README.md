@@ -91,8 +91,6 @@ Headline figure — `BM_FullPipeline` (the dominant message type, ~60% of ITCH t
 |---|---|
 | Mean per-message latency | 17.17 ns |
 | Median (p50) per-message latency | 16.93 ns |
-| Grouped-batch p99 (128-op window) | 22.46 ns |
-| Grouped-batch p999 (128-op window) | 45.90 ns |
 | Messages processed (end-to-end, pending re-verification) | 226M |
 | Throughput (end-to-end, pending re-verification) | 7.8M msg/s |
 
@@ -110,6 +108,14 @@ are consequently percentiles of *per-op-equivalent group means*, not single-oper
 percentiles — a real tail event in one op is damped, not eliminated, by averaging over its
 128-op window. See [`bench/BASELINE.md`](bench/BASELINE.md) for the full derivation, rationale,
 and acceptance test.
+
+**Tail percentiles (p99, p999) are not reliably measurable on this setup** and are omitted
+above: across 8 repetitions per benchmark, p99 has a coefficient of variation of 27–97% on 6
+of 8 benchmarks, and p999 18–43% on all 8 — on an unpinned, multi-tenant machine the measured
+tail reflects OS scheduling (preemption, page faults, frequency scaling), not engine behavior.
+Only mean and p50 are stable enough to cite single-sample (cv ≤2.81% across all 8 benchmarks).
+Stable tail measurement would require core pinning on an otherwise-quiet host, ideally Linux
+with isolated CPUs. Full cv table: [`bench/BASELINE.md`](bench/BASELINE.md).
 
 ## Research Results
 
