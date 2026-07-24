@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
+#include <new>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrderBook: reconstructs the full limit order book from ITCH messages.
@@ -36,6 +37,72 @@
 //   overflow_bids_ / overflow_asks_: std::map<price → shares>
 //     Price levels beyond the top TOP_LEVELS. Rarely accessed in practice.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PoolAllocator: fixed-size free-list allocator for node-based containers.
+//
+// std::unordered_map is node-based: every insert that doesn't hit an
+// existing key allocates one heap node, and every erase frees one. On the
+// order_ref hot path (add/delete/replace/execute) this happens once or
+// twice per ITCH message. This allocator recycles freed nodes via an
+// intrusive free-list instead of round-tripping through the general-purpose
+// allocator on every op — same alloc/dealloc call sites, no change to
+// unordered_map's find/insert/erase semantics or iteration order guarantees.
+//
+// Single-element (size==1) requests are served from the free-list; anything
+// else (e.g. the bucket array, allocated in bulk on rehash) falls back to
+// plain ::operator new/delete, since those aren't the hot path this targets.
+//
+// The free-list is static per instantiated type T, so it's shared across
+// all containers using PoolAllocator<T> in the process — intentional: it
+// keeps the allocator stateless (trivial equality, no propagate_on_*
+// complications) and nodes freed by one OrderBook can be reused by another.
+// ─────────────────────────────────────────────────────────────────────────────
+template <typename T>
+class PoolAllocator {
+public:
+    using value_type = T;
+
+    PoolAllocator() noexcept = default;
+    template <typename U>
+    PoolAllocator(const PoolAllocator<U>&) noexcept {}
+
+    T* allocate(std::size_t n) {
+        if (n == 1) {
+            if (free_list_) {
+                Node* node = free_list_;
+                free_list_ = free_list_->next;
+                return reinterpret_cast<T*>(node);
+            }
+            return static_cast<T*>(::operator new(sizeof(T)));
+        }
+        return static_cast<T*>(::operator new(n * sizeof(T)));
+    }
+
+    void deallocate(T* p, std::size_t n) noexcept {
+        if (n == 1) {
+            Node* node = reinterpret_cast<Node*>(p);
+            node->next = free_list_;
+            free_list_ = node;
+            return;
+        }
+        ::operator delete(p);
+    }
+
+    template <typename U> struct rebind { using other = PoolAllocator<U>; };
+
+    template <typename U>
+    bool operator==(const PoolAllocator<U>&) const noexcept { return true; }
+    template <typename U>
+    bool operator!=(const PoolAllocator<U>&) const noexcept { return false; }
+
+private:
+    union Node {
+        Node*                                  next;
+        alignas(T) unsigned char               storage[sizeof(T)];
+    };
+    static inline Node* free_list_ = nullptr;
+};
 
 // Number of price levels kept in the flat array (compile-time constant).
 // The compiler can unroll inner loops over this range.
@@ -83,7 +150,9 @@ struct BookSnapshot {
 
 class OrderBook {
 public:
-    explicit OrderBook(const std::string& symbol) : symbol_(symbol) {}
+    explicit OrderBook(const std::string& symbol) : symbol_(symbol) {
+        orders_.reserve(1 << 20);
+    }
 
     void add_order(uint64_t ts, uint64_t order_ref, char side,
                    uint32_t shares, uint32_t price);
@@ -105,7 +174,8 @@ private:
     std::string symbol_;
     uint64_t    last_ts_ = 0;
 
-    std::unordered_map<uint64_t, Order> orders_;
+    std::unordered_map<uint64_t, Order, std::hash<uint64_t>, std::equal_to<uint64_t>,
+                       PoolAllocator<std::pair<const uint64_t, Order>>> orders_;
 
     FlatLevels                   flat_bids_;      // top TOP_LEVELS bid prices
     FlatLevels                   flat_asks_;      // top TOP_LEVELS ask prices
