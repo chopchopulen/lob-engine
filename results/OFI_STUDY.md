@@ -94,32 +94,51 @@ is only meaningful in contrast to it. Do not cite this table.
 
 ### Real construction validation (2026-07-24), on correct main-feed data
 
-Regenerated `data/features_{AAPL,AMZN,NFLX,WDAY}.csv` from a real Nasdaq main-feed file
+Regenerated `data/features_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv` from a real Nasdaq main-feed file
 (2019-12-30, downloaded from `emi.nasdaq.com`) through the fixed, `stock_locate`-filtered
-pipeline (Task 2, commit `3253443`) and validated by `scripts/validate_book.py` before use (see
-`PROJECT_STATUS.md` for the full regeneration record, including one held-back ticker — ETSY —
-whose single flagged row is a real pre-market stub quote, not corruption, and is not used
-here). Same contemporaneous check as above (`ofi` vs. same-interval `mid_price.pct_change()`,
-no shift), regular-hours-only (09:30–16:00 ET):
+pipeline (Task 2, commit `3253443`) and validated by `scripts/validate_book.py` before use.
 
-| Ticker | N | Contemporaneous R² | `ofi==0` fraction |
-|---|---|---|---|
-| AAPL | 21,948 | **0.6184** | 10.1% |
-| AMZN | 19,694 | **0.3348** | 47.4% |
-| NFLX | 16,936 | **0.2907** | 38.2% |
-| WDAY | 11,906 | **0.1586** | 53.1% |
+**Schema/design correction made in the course of this validation:** `FeatureRow` and the CSV
+export now carry raw `best_bid`/`best_ask` columns (the actual `BookSnapshot` values), not just
+`mid_price`/`quoted_spread` — reconstructing bid/ask as `mid ± spread/2` is exact algebra but
+definitionally self-consistent with `mid_price`/`quoted_spread`, so it cannot catch a row where
+those two are themselves wrong. `scripts/validate_book.py` now validates the raw columns
+directly. A second correction followed immediately: the absurd-spread and
+degenerate-spread-percentage checks were originally whole-file hard fails, which broke
+promotion for ETSY and WDAY on their legitimate pre-market stub quotes (a real, near-zero bid +
+deliberately-unfillable distant ask, not corruption). These two checks are now scoped to the
+regular session (09:30–16:00 ET) only; negative-spread, crossed-book, and the
+uint32_t-underflow-signature checks remain whole-file hard fails, since those are never valid
+at any time of day. All 5 tickers now pass and are promoted.
+
+**Approved quote-validity filter (`bid>0 AND ask>0 AND ask>bid AND spread<=10% of mid`) applied
+at regression time, regular-session data only:**
+
+| Ticker | N before filter | Rows dropped by filter | N final | Contemporaneous R² | `ofi==0` fraction |
+|---|---|---|---|---|---|
+| AAPL | 21,949 | **0** | 21,948 | **0.6184** | 10.1% |
+| AMZN | 19,695 | **0** | 19,694 | **0.3348** | 47.4% |
+| ETSY | 9,944 | **0** | 9,943 | **0.0935** | — |
+| NFLX | 16,937 | **0** | 16,936 | **0.2907** | 38.2% |
+| WDAY | 11,907 | **0** | 11,906 | **0.1586** | 53.1% |
+
+**The filter drops zero rows for every ticker in regular session, confirming it is currently
+defensive infrastructure, not an active correction — exactly as characterized before applying
+it.** AAPL's R² is byte-for-byte unchanged at 0.6184: applying a quote-validity filter that
+drops nothing did not move the number, which is what should happen and is the check the user
+asked for explicitly. AMZN/NFLX/WDAY are likewise unchanged from the pre-filter run.
 
 **This is a genuine validation of the OFI construction, replacing the superseded table above —
 not a restatement of it.** AAPL lands at 0.62, squarely inside Cont/Kukanov/Stoikov's 0.4–0.7
 literature range, on data independently confirmed correct by direct book inspection (unlike the
 superseded table, where `ofi` and `mid_price` were both derived from the same corrupted
-reconstruction — see "Lesson learned," `PROJECT_STATUS.md`). The other three tickers show a
-clean, monotonic liquidity gradient (`ofi==0` fraction — how often a second passes with zero
-top-of-book change — rises from 10% for AAPL to 53% for WDAY, and R² falls correspondingly from
-0.62 to 0.16) exactly matching the theoretical expectation that OFI's contemporaneous
-explanatory power scales with liquidity. None of the four are anywhere near zero, and none show
-the flat, structureless pattern that would indicate a construction bug. The OFI implementation
-is validated on real, verified-correct data.
+reconstruction — see "Lesson learned," `PROJECT_STATUS.md`). All five tickers show a clean,
+monotonic-ish liquidity gradient (`ofi==0` fraction rises from 10% for AAPL to 53% for WDAY; R²
+falls correspondingly from 0.62 down to ETSY's 0.09, the smallest-cap and least-liquid name in
+the set) matching the theoretical expectation that OFI's contemporaneous explanatory power
+scales with liquidity. None are anywhere near the ~0.001 values seen on corrupted data, and none
+show the flat, structureless pattern that would indicate a construction bug. The OFI
+implementation is validated on real, verified-correct data across all 5 study tickers.
 
 **RETRACTED, 2026-07-24, after "Blocker 1" below: "AAPL lands squarely in the literature's
 range — the OFI implementation is sound" was the wrong conclusion, for a specific and
@@ -362,7 +381,7 @@ so it isn't mistaken for a regular-session number. No further re-run is needed f
 blocker; this section exists only to state it plainly, as requested, rather than leave it
 implicit in table headers.
 
-## Degenerate-quote characterization (2026-07-24) — proposed filter, NOT YET APPLIED
+## Degenerate-quote characterization (2026-07-24) — filter approved and applied
 
 Prompted by the ETSY $200,000-spread row found during Task 2's regeneration (real 2026-07-24
 main-feed download, 2019-12-30): is this ETSY-specific, or one instance of a class (pre-market
@@ -399,7 +418,7 @@ date. This is a small, real, pre-market-confined phenomenon on this date — not
 widespread or ETSY-specific defect, and not (based on this single date) something regular-hours
 restriction alone fails to handle.
 
-### Proposed filter (NOT YET APPLIED — awaiting approval of thresholds)
+### Filter, as approved (one change from the original proposal — see below)
 
 Even though this date's regular-session data is already fully clean, a documented, permanent
 filter is proposed as defensive infrastructure for the eventual multi-date panel, where a
@@ -434,12 +453,17 @@ that must be shown before applying it:**
 | NFLX | 16,937 | **0** | 16,937 |
 | WDAY | 11,907 | **0** | 11,907 |
 
-The filter is currently inert for this date's regular-session panel — it would drop zero rows
-everywhere, confirming the earlier "eyeball" judgment on the ETSY row (a real pre-market stub
-quote, already outside the regular-session window) rather than overriding it. Its value is
-prospective: a documented, uniform rule ready for dates/tickers in the eventual panel that are
-not this clean. Awaiting approval of the specific thresholds (`bid`/`ask` strict positivity,
-10% spread-to-mid ceiling) before wiring it into the pipeline.
+**Approved with one change**: validate on the RAW `best_bid`/`best_ask` the book produced, not
+values reconstructed from `mid_price ± quoted_spread/2` — reconstructing from those two is
+definitionally self-consistent with them and can't catch a row where they're themselves wrong.
+`FeatureRow`/the CSV export were extended with raw `best_bid`/`best_ask` columns to make this
+possible (see "Real construction validation" above). The filter is confirmed inert for this
+date's regular-session panel — it dropped zero rows for every one of the 5 tickers when
+actually applied, confirming the earlier "eyeball" judgment on the ETSY row (a real pre-market
+stub quote, already outside the regular-session window) rather than overriding it, and
+confirming AAPL's R² does not move when a filter that changes nothing is applied. Its value
+remains prospective: a documented, uniform rule ready for dates/tickers in the eventual panel
+that are not this clean.
 
 ---
 

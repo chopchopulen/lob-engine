@@ -59,7 +59,7 @@ result this project has had:**
 | Number | Source | Required caveat |
 |---|---|---|
 | AAPL contemporaneous OFI→return R²=0.62 (2019-12-30, regular session) | `results/OFI_STUDY.md` "Real construction validation" | Single date, main-feed, verified-correct data (`scripts/validate_book.py` passed). Construction validation only — not a predictive/tradeable claim |
-| AMZN R²=0.33, NFLX R²=0.29, WDAY R²=0.16 (same date) | Same | Clean liquidity gradient consistent with theory; same single-date caveat |
+| AMZN R²=0.33, ETSY R²=0.09, NFLX R²=0.29, WDAY R²=0.16 (same date) | Same | Clean liquidity gradient consistent with theory (ETSY = smallest-cap, lowest R²); same single-date caveat |
 
 **No predictive/multi-date OFI number is currently claimable** — one date can't support a
 cross-date split. Every predictive number below is retired pending the full panel:
@@ -184,12 +184,11 @@ day) at a time, so rebuilding a `panel_*.csv` means running it once per day and 
   tickers sharing the same `order_ref` and proves cross-contamination no longer occurs. No
   regression in `bench/BASELINE.md` mean/p50 (unaffected code path — the microbenchmarks
   exercise `OrderBook`/`FeatureEngine` directly, never `itch_parser.cpp`).
-- **ETSY not promoted to `data/` for 2019-12-30 — pending a decision.** Its one flagged row
-  (spread=$200,000, timestamp ~7:42 AM) was inspected and found to be a real pre-market stub
-  quote (near-zero bid, deliberately-unfillable distant ask), not the corruption signature.
-  Open question: should `validate_book.py` special-case pre-market timestamps, should this
-  specific row be manually accepted, or should ETSY simply wait for a regeneration that starts
-  from regular-session data only? Not decided — held back rather than guessed at.
+- ~~ETSY not promoted to `data/` for 2019-12-30~~ — **resolved 2026-07-24**: `validate_book.py`
+  now scopes its absurd-spread/degenerate-spread hard fails to regular-session hours only
+  (09:30–16:00 ET); pre-market/post-market rows are reported informationally, never block
+  promotion. All 5 tickers (including ETSY) now pass and are promoted. See
+  `results/OFI_STUDY.md` "Degenerate-quote characterization."
 - **VPIN / Lee-Ready work: explicitly not started**, per current instruction.
 
 ## Repo state

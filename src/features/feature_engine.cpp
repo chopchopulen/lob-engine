@@ -109,6 +109,8 @@ void FeatureEngine::on_book_update(const OrderBook& book, uint64_t ts) {
     // under more pressure, so fair value should be closer to it.
     double bid_p = curr.best_bid_price / 10000.0;
     double ask_p = curr.best_ask_price / 10000.0;
+    row.best_bid = bid_p;   // raw, straight from the book snapshot — see FeatureRow comment
+    row.best_ask = ask_p;
     double bid_q = curr.best_bid_shares;
     double ask_q = curr.best_ask_shares;
     double tot   = bid_q + ask_q;
@@ -164,11 +166,13 @@ void FeatureEngine::write_csv(const std::string& path) const {
     std::ofstream f(path);
     if (!f) throw std::runtime_error("Cannot write CSV: " + path);
 
-    f << "ts,mid_price,micro_price,quoted_spread,ofi,normalized_ofi,trade_imbalance,"
-      << "ofi_l1,ofi_l5,ofi_l10\n";
+    f << "ts,best_bid,best_ask,mid_price,micro_price,quoted_spread,ofi,normalized_ofi,"
+      << "trade_imbalance,ofi_l1,ofi_l5,ofi_l10\n";
 
     for (const auto& r : rows_) {
         f << r.timestamp_ns    << ","
+          << r.best_bid        << ","
+          << r.best_ask        << ","
           << r.mid_price       << ","
           << r.micro_price     << ","
           << r.quoted_spread   << ","

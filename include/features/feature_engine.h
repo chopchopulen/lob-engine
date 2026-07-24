@@ -39,6 +39,12 @@
 
 struct FeatureRow {
     uint64_t timestamp_ns;
+    double   best_bid;         // raw best bid price, dollars — straight from BookSnapshot,
+    double   best_ask;         // NOT re-derived from mid_price/quoted_spread. Validation
+                                // must check these directly: reconstructing bid/ask from
+                                // mid +- spread/2 can pass a row whose mid_price or
+                                // quoted_spread is itself wrong, since that reconstruction
+                                // is definitionally self-consistent with them.
     double   mid_price;       // (bid + ask) / 2
     double   micro_price;     // volume-weighted fair value
     double   quoted_spread;   // ask - bid in dollars
