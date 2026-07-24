@@ -362,6 +362,85 @@ so it isn't mistaken for a regular-session number. No further re-run is needed f
 blocker; this section exists only to state it plainly, as requested, rather than leave it
 implicit in table headers.
 
+## Degenerate-quote characterization (2026-07-24) — proposed filter, NOT YET APPLIED
+
+Prompted by the ETSY $200,000-spread row found during Task 2's regeneration (real 2026-07-24
+main-feed download, 2019-12-30): is this ETSY-specific, or one instance of a class (pre-market
+stub quotes, one-sided books, opening-auction locks) that needs a general rule before scaling
+to a multi-date panel? Characterized across all 5 study tickers before proposing anything.
+
+**Regular session (09:30–16:00 ET), all 5 tickers, this date:**
+
+| Ticker | N | `bid<=0` | `ask<=0` | one-sided | `mid==0` | spread > 10% of mid |
+|---|---|---|---|---|---|---|
+| AAPL | 21,949 | 0 | 0 | 0 | 0 | 0 |
+| AMZN | 19,695 | 0 | 0 | 0 | 0 | 0 |
+| ETSY | 9,944 | 0 | 0 | 0 | 0 | 0 |
+| NFLX | 16,937 | 0 | 0 | 0 | 0 | 0 |
+| WDAY | 11,907 | 0 | 0 | 0 | 0 | 0 |
+
+**Zero degenerate rows, by any of these measures, in regular session, for any of the 5
+tickers, on this date.** The ETSY row that triggered this investigation falls at
+`sec_of_day≈27755` (~7:42 AM) — already outside the `[34200, 57600]` window every
+contemporaneous/predictive check in this file uses. Full-day (including pre-market/post-market)
+counts, for completeness:
+
+| Ticker | Full-day N | One-sided (full day) | Spread > 10% of mid (full day) | Timestamps of flagged rows |
+|---|---|---|---|---|
+| AAPL | 24,729 | 0 | 0 | — |
+| AMZN | 22,832 | 0 | 0 | — |
+| ETSY | 10,213 | 1 | 9 | 25,200–32,340s (7:00–9:00 AM) |
+| NFLX | 17,922 | 0 | 0 | — |
+| WDAY | 12,125 | 0 | 4 | 25,200–28,822s (7:00–8:00 AM) |
+
+Every flagged row across every ticker falls before 9:00 AM — well before the regular session
+starts. AAPL, AMZN, and NFLX show zero degenerate rows even including pre-market, on this
+date. This is a small, real, pre-market-confined phenomenon on this date — not evidence of a
+widespread or ETSY-specific defect, and not (based on this single date) something regular-hours
+restriction alone fails to handle.
+
+### Proposed filter (NOT YET APPLIED — awaiting approval of thresholds)
+
+Even though this date's regular-session data is already fully clean, a documented, permanent
+filter is proposed as defensive infrastructure for the eventual multi-date panel, where a
+messier date or a thinner ticker could produce an intra-session degenerate quote that this
+date happens not to exhibit. Proposed rule, to live as a documented step in the data-loading
+path (e.g. `scripts/analysis.py`'s `load_features()`, alongside `verify_provenance()`), applied
+identically to every ticker with no per-name exceptions:
+
+```python
+bid = df['mid_price'] - df['quoted_spread'] / 2.0
+ask = df['mid_price'] + df['quoted_spread'] / 2.0
+valid = (bid > 0) & (ask > 0) & (df['quoted_spread'] <= 0.10 * df['mid_price'])
+df = df[valid]
+```
+
+- **`bid > 0` and `ask > 0`** (strictly positive, not `>= 0`): a real quote has a real positive
+  price; requires a genuine two-sided book.
+- **`spread <= 10% of mid_price`**: reuses the exact 10% threshold from the characterization
+  above (Task 1), rather than introducing a new arbitrary number.
+- Filters on **quote validity only** — `bid`, `ask`, `mid_price`, `quoted_spread`. Never
+  touches `ofi` or the return being regressed, so it cannot engineer the regression result.
+- Applies identically to every ticker; no per-name thresholds or exceptions.
+
+**Exact effect of this filter on this date's regular-session data, per ticker — the number
+that must be shown before applying it:**
+
+| Ticker | Regular-session N (current) | Rows dropped by proposed filter | N after filter |
+|---|---|---|---|
+| AAPL | 21,949 | **0** | 21,949 |
+| AMZN | 19,695 | **0** | 19,695 |
+| ETSY | 9,944 | **0** | 9,944 |
+| NFLX | 16,937 | **0** | 16,937 |
+| WDAY | 11,907 | **0** | 11,907 |
+
+The filter is currently inert for this date's regular-session panel — it would drop zero rows
+everywhere, confirming the earlier "eyeball" judgment on the ETSY row (a real pre-market stub
+quote, already outside the regular-session window) rather than overriding it. Its value is
+prospective: a documented, uniform rule ready for dates/tickers in the eventual panel that are
+not this clean. Awaiting approval of the specific thresholds (`bid`/`ask` strict positivity,
+10% spread-to-mid ceiling) before wiring it into the pipeline.
+
 ---
 
 ## SUPERSEDED — within-day 70/30 split (original methodology), do not cite for OOS claims
