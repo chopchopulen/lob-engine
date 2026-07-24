@@ -120,15 +120,132 @@ because the original estimate was "right by luck"; the ~2x-larger `DeleteOrder_2
 (54% vs the old harness's ~30%) shows the old numbers were not reliable even in aggregate
 direction of magnitude, just coincidentally close on some cases.
 
-Note on p999 columns above: several *increase* post-fix (e.g. AddOrder 30.60→48.83,
-FullPipeline 32.23→45.90). This is plausible and not a regression signal: with per-op cost
-lower overall, the *relative* weight of a fixed-cost tail event (e.g. an
-`unordered_map` bucket-array rehash, which still allocates in bulk even with the pool
-allocator — see bench_timing.h and the pool allocator's fallback to `::operator new` for
-non-size-1 requests) becomes larger relative to the now-smaller typical op cost, pulling the
-group-mean p999 up in relative terms even though absolute mean/p50/p99 all improved. This is
-exactly the kind of nuance the old harness's tick-quantized p99=84/125ns could never have
-shown either way.
+## p999 investigation (2026-07-23) — the "relative weight" explanation above was wrong
+
+The note originally here claimed the post-fix p999 increases (AddOrder 30.60→48.83,
+FullPipeline 32.23→45.90, ExecuteOrder 20.19→41.66) were a *relative-weighting* artifact: a
+fixed-cost tail event becoming a larger fraction of a now-smaller typical op cost. **That
+explanation does not survive scrutiny and is retracted.** A relative-weighting argument
+predicts the tail event's absolute nanosecond cost is unchanged — but these are absolute
+increases in nanoseconds, not just proportionally larger shares of a smaller mean. It also
+cannot explain ExecuteOrder, whose mean did not move at all (14.11→14.20ns, i.e., no "smaller
+typical cost" occurred) while its p999 more than doubled.
+
+**Hypothesis tested instead: p999 regressions track net pool-allocator growth** (AddOrder and
+FullPipeline evict-then-refill each group and were suspected to grow the pool monotonically,
+forcing a rare bulk chunk-allocation spike; DeleteOrder/ReplaceOrder don't grow the pool and
+were the two that didn't regress).
+
+**Step 1 — read the allocator (`include/book/order_book.h`, `PoolAllocator<T>`).** It has no
+chunking or bulk-growth policy at all: `allocate(1)` pops one node off an intrusive free-list,
+or on a miss calls `::operator new(sizeof(T))` for exactly **one** node — never a batch/chunk.
+Only non-size-1 requests (the `unordered_map` bucket array, not order nodes) go through
+`::operator new(n * sizeof(T))`, and `orders_.reserve(1<<20)` in the constructor pre-sizes
+that bucket array once, up front, well above the benchmark pool sizes (10,000 / 1,000) — no
+rehash occurs during any of these runs. There is no pre-reservation of free-list nodes; the
+free-list only fills as orders are deleted.
+
+**Step 2 — instrumented the allocator directly** (temporary counters on the free-list-miss
+path, `single_new_calls()`, not shipped — reverted after this investigation) and confirmed via
+code reading that `BM_AddOrder`/`BM_FullPipeline` evict exactly `GROUP_SIZE` orders
+immediately before re-adding the same `GROUP_SIZE` refs at the same prices each group — net
+pool size is constant after warmup, by construction, not just empirically.
+
+**Step 3 — direct test.** Ran `BM_AddOrder` and `BM_FullPipeline` for 16 total post-warmup
+repetitions (8 reps × 2 benchmarks) with the instrumented build:
+`pool_new_calls_post_warmup = 0` in **every single repetition, no exceptions**. The free-list
+never misses after warmup. The hypothesis is **refuted** — there is no chunk-growth event for
+this instrumentation to have measured a spike from.
+
+**What's actually going on:** with pool growth ruled out, all 5 primary benchmarks (not just
+the ones flagged as "regressed") were re-run 8 times each in one process
+(`--benchmark_repetitions=8 --benchmark_report_aggregates_only=false`,
+`--benchmark_min_time=1.5s`) to characterize repetition-to-repetition variance:
+
+| Benchmark | mean cv | p50 cv | p99 cv | p999 cv | p999 range across 8 reps |
+|---|---|---|---|---|---|
+| BM_AddOrder | 0.70% | 0.74% | 27.15% | 18.72% | 26.0 – 52.7 ns |
+| BM_DeleteOrder | 1.19% | 0.72% | 5.01% | 32.12% | 22.1 – 44.9 ns |
+| BM_ReplaceOrder | 1.12% | 0.38% | 7.29% | 32.82% | 42.0 – 89.5 ns |
+| BM_ExecuteOrder | 0.28% | 0.00% | 4.98% | 28.23% | 19.2 – 37.1 ns |
+| BM_FullPipeline | 0.57% | 0.98% | 5.52% | 42.83% | 23.8 – 54.0 ns |
+
+p999's cv is 18–43% for every benchmark — **including `BM_DeleteOrder` and
+`BM_ReplaceOrder`**, the two the original Phase 4 table called "flat" and "improved." Both
+show ~2x rep-to-rep swings in p999, the same relative magnitude as `BM_AddOrder`,
+`BM_ExecuteOrder`, and `BM_FullPipeline`. Mean and p50 are stable (cv ≤1.2%) across all five;
+p999 alone is not.
+
+**Conclusion:** the Phase 4 table compared a single pre-fix p999 sample against a single
+post-fix p999 sample for each benchmark. Given p999's demonstrated 18–43% cv on *identical,
+unchanged code*, a single-sample before/after diff of p999 is not a reliable signal of a
+directional change — it is well within the noise band this statistic exhibits regardless of
+the allocator. The apparent "regression" in three benchmarks and "flat"/"improvement" in the
+other two is consistent with which side of that noise distribution each single sample happened
+to land on, not with a real allocator-driven mechanism. p999 in this harness measures rare,
+low-sample-count tail events (recall from Phase 1: it's the percentile of ~500-1,300k *group*
+means, so the p999 estimate itself rests on very few extreme samples) most plausibly explained
+by host-level jitter (scheduler preemption, page faults, thermal/frequency scaling) landing
+inside a 128-op window — not a deterministic property of the code under test.
+
+**ExecuteOrder anomaly, resolved:** its mean/p50 are the most stable of all five benchmarks
+(cv 0.28% / 0.00%) — expected, since it never calls `orders_.insert`/`erase` and the pool
+allocator has no relevant code path to affect. Its p999 swung 19.2–37.1ns (cv 28%) across 8
+reps in the same run, in line with the other four benchmarks' p999 noise level. This is fully
+explained by the same measurement-variance mechanism above; no allocator-related or other
+mechanistic cause is indicated, and none is claimed.
+
+**No engine fix applied.** Step 5 of this investigation ("propose a fix, measure
+before/after") is void: the hypothesis it was conditioned on ("if confirmed, propose a fix")
+did not confirm. Changing the pool allocator's chunk/reservation strategy would not address a
+mechanism that isn't there, and doing so anyway risked introducing a real change on the
+strength of a false premise. `PoolAllocator<T>` is unchanged from the version verified in the
+item-3 fix loop.
+
+**p999 on this machine reflects OS scheduling, not engine behavior.** This setup runs on an
+unpinned, shared host (no core pinning, no isolation from the rest of the OS scheduler) — the
+tail events driving p999's 18–43%+ cv are plausibly ordinary scheduler preemption, page
+faults, or frequency-scaling transitions landing inside a 128-op window, not a property of the
+code under test. Stable tail-latency measurement (a p999 trustworthy enough to diff
+single-sample before/after) would require a pinned core on an otherwise-quiet host, which this
+setup does not provide. Treat p999 here as "this machine's noise floor," not as an engine
+characteristic.
+
+## p50/p99 stability check (2026-07-23) — which percentiles are safe to cite
+
+Prompted by publishing a p99 figure in README.md: is p99 as noise-dominated as p999, or closer
+to p50/mean? Re-ran all 8 benchmarks, 8 repetitions each, same command as above
+(`--benchmark_repetitions=8 --benchmark_report_aggregates_only=true`,
+`--benchmark_min_time=1.5s`):
+
+| Benchmark | mean cv | p50 cv | p99 cv | p999 cv |
+|---|---|---|---|---|
+| BM_AddOrder | 7.32% | 1.10% | 57.16% | 49.49% |
+| BM_DeleteOrder | 11.80% | 1.44% | 96.93% | 108.08% |
+| BM_ReplaceOrder | 0.98% | 0.50% | 1.64% | 36.58% |
+| BM_ExecuteOrder | 4.49% | 1.17% | 30.09% | 79.24% |
+| BM_AddOrder_20L | 7.40% | 2.81% | 34.20% | 93.80% |
+| BM_DeleteOrder_20L | 2.03% | 0.00% | 27.99% | 39.60% |
+| BM_FullPipeline | 0.50% | 0.00% | 7.36% | 43.34% |
+| BM_FullPipeline_20L | 0.50% | 0.00% | 2.84% | 34.87% |
+
+**p50 is stable and safe to cite single-sample: cv ≤2.81% on every benchmark**, consistent
+with the earlier finding. Mean is also generally low (≤11.80%, mostly <8%) but noisier than
+p50 on this run — this run itself shows the mean is not perfectly immune to the same host
+jitter, just far less exposed to it than p99/p999.
+
+**p99 is noise-dominated on 6 of 8 benchmarks (cv 27–97%)** — essentially as unreliable as
+p999. Only `BM_ReplaceOrder` (1.64%) and `BM_FullPipeline_20L` (2.84%) show p99 stable enough
+to trust single-sample; `BM_FullPipeline` — the benchmark README.md currently cites a p99
+figure from — sits at 7.36% cv, better than most but still an order of magnitude noisier than
+its own p50 (0.00% this run). `BM_DeleteOrder`'s p99 cv of 96.93% means the statistic is
+essentially meaningless as reported: its own repetition-to-repetition spread is comparable to
+its value.
+
+**Recommendation:** do not cite p99 as a stable single-sample figure for any of these
+benchmarks, including `BM_FullPipeline`. Only mean and p50 are currently defensible as
+single-sample citable statistics; p99 and p999 require the same treatment — reported only as
+a multi-repetition range, or not cited at all, on this unpinned host.
 
 ## End-to-end throughput (226M messages, 7.8M msg/s, 29.0s) — still unverified, unaffected by this harness work
 
