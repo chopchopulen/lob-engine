@@ -101,3 +101,42 @@ can silently corrupt output, then performance.
 | — | 226M msg / 7.8M msg/s claim | — | Unverified | Needs real ITCH file |
 
 Baseline reference: `bench/BASELINE.md`. Next step: user picks which items to fix; only then does the fix loop start (builder → test-runner + perf-analyst re-measure → adversarial-reviewer confirms no regression vs BASELINE.md → repeat).
+
+---
+
+## Open item (not investigated) — ASan/UBSan build hangs indefinitely
+
+**Status:** logged, not diagnosed. Do not lose this.
+
+While adversarially verifying the item-3 pool-allocator fix (fix-loop session,
+2026-07-23), a manually-compiled ASan+UBSan build of `test_order_book.cpp` +
+`order_book.cpp` + `itch_parser.cpp` + `feature_engine.cpp`
+(`c++ -std=c++17 -O0 -g -fsanitize=address,undefined ...`) hung indefinitely —
+three separate invocations spun at 100% CPU for 15+ minutes to 54+ minutes
+before being killed, never producing output or crashing.
+
+**Isolation done:** rebuilt the identical ASan/UBSan command against the
+*pre*-item-3 `order_book.h` (plain `std::unordered_map`, no pool allocator,
+via `git show HEAD:include/book/order_book.h` at the pre-item-3 commit) — it
+hung identically. This rules out the item-3 pool allocator as the cause; the
+hang reproduces on code that predates this session's changes entirely.
+
+**Hypothesis, unconfirmed:** macOS ASan runtime pathology (shadow-memory
+init / interceptor issue specific to this machine's AppleClang + ASan
+runtime combination), not a bug in engine logic — but this is a guess, not a
+diagnosis. The plain `-O2` Release build (no sanitizers) has never shown this
+behavior across dozens of test/bench runs this session.
+
+**Not yet done:** root-causing why it hangs, whether it's ASan-specific or
+also affects a plain `-O0` no-sanitizer debug build, whether `lldb`-attaching
+mid-hang shows a real spin loop in engine code vs. sanitizer runtime init
+(one earlier `lldb bt` sample during a *different*, shorter-lived hang showed
+the process still inside `__asan::AsanInitInternal`/shadow-memory setup —
+consistent with slow-but-not-infinite ASan startup for at least one of the
+observed hangs, but doesn't explain the 54-minute cases).
+
+**Suggested next step (not started):** reproduce with a minimal single-file
+repro (no test harness) to rule out ASan itself vs. something in this
+specific build's translation units; try `lldb bt` on one of the long-hung
+(30+ min) processes specifically, not just an early one, to see if it's
+still in ASan init or has moved into actual program logic by then.
