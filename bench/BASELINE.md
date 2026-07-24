@@ -335,3 +335,49 @@ BM_FullPipeline_20L/min_time:2.000_median       37.5 ns         37.5 ns         
 The SUPERSEDED before/after table that used to live here (claiming "28-43% wall-clock
 improvement, ReplaceOrder p99 125→84ns") is retired along with the numbers it was built from.
 The real, harness-validated delta is in the "Phase 4" section above.
+
+## Parser throughput (`bench/bench_parser.cpp`, added 2026-07-24)
+
+**Why this exists:** every other benchmark in this file exercises `OrderBook`/`FeatureEngine`
+directly — none of them ever call `itch_parser.cpp`. When the `stock_locate` refactor changed
+the parser (`PROJECT_STATUS.md`), rerunning this file's benchmarks against it was a null test
+by construction. This is the missing component-level counterpart to the engine's end-to-end
+throughput claim (226M msg / 7.8M msg/s, itself still unverified — see `PROJECT_STATUS.md`).
+
+**Measured on:** Nasdaq BX ITCH sample, 2019-07-30
+(`https://emi.nasdaq.com/ITCH/Nasdaq%20BX%20ITCH/20190730.BX_ITCH_50.gz`, ~373MB compressed /
+~837MB decompressed). Not committed to the repo (real ITCH files are hundreds of MB, same
+reason `data/*.bin` is gitignored) — set `LOB_BENCH_ITCH_FILE` to a local copy to reproduce.
+Timing discipline adapted from `bench_timing.h`'s grouped-batch approach — see
+`bench/bench_parser.cpp`'s header comment for why literal `GROUP_SIZE=128` batching doesn't
+apply here (one full-file parse is already tens of thousands of ticks, far above the
+tick-resolution floor that motivated grouping for single-op `OrderBook` benchmarks). Unfiltered
+scan (every message dispatched to a callback, matching "total messages" exercising every
+parsing branch) — a realistic filtered single-ticker pass is faster than this, not slower, since
+most messages take the cheap early-exit skip path instead of full decode + dispatch.
+
+```bash
+LOB_BENCH_ITCH_FILE=/path/to/20190730.BX_ITCH_50 \
+  ./lob_bench --benchmark_filter='BM_ParseFile' --benchmark_min_time=1.0s \
+              --benchmark_repetitions=8 --benchmark_report_aggregates_only=false
+```
+
+| Metric | mean | p50 (median of reps) | cv |
+|---|---|---|---|
+| Wall time per full-file parse | 1515 ms | 1512 ms | 1.37% |
+| Throughput | 15.72M msgs/sec | 15.75M msgs/sec | 1.35% |
+| Per-message cost | 63.6 ns | 63.5 ns | 1.37% |
+
+23,821,600 messages dispatched per rep (every `'A'`/`'F'`/`'D'`/`'U'`/`'E'`/`'C'`/`'X'` message
+in the file — message types without a registered callback, e.g. `'R'` Stock Directory, System
+Event, quoting/auction messages, are read and skipped but not counted in this total). cv
+≤1.37% across 8 repetitions — stable, unlike the `OrderBook` microbenchmarks' p99/p999 (see the
+p50/p99 stability section above); this workload's dominant cost is CPU-bound field decode +
+callback dispatch on an OS-page-cache-warm file, not the same kind of rare-tail-event noise.
+
+**Sanity check against the end-to-end claim:** 15.72M msgs/sec (parsing alone) is roughly 2x
+the claimed 7.8M msg/s end-to-end figure — directionally consistent with parsing being a
+meaningful but not majority share of full-pipeline (`parse` + `OrderBook` + `FeatureEngine`)
+per-message cost. This is a plausibility check, not a verification of the 7.8M msg/s figure
+itself, which remains blocked on the same missing-raw-file constraint documented in
+`PROJECT_STATUS.md`.

@@ -1,7 +1,10 @@
 #include "book/order_book.h"
 #include "feed/itch_parser.h"
+#include "features/feature_engine.h"
 #include <cassert>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 #include <cstdint>
 #include <vector>
@@ -380,6 +383,93 @@ static void test_replace_and_cross_ticker_order_ref_collision() {
     std::cout << "PASS test_replace_and_cross_ticker_order_ref_collision\n";
 }
 
+// ── test_golden_fixture_pipeline ──────────────────────────────────────────────
+// Byte-for-byte regression test on the full ITCH-file -> CSV pipeline, run
+// against a real slice of Nasdaq BX ITCH data (test/fixtures/itch_sample_slice.bin,
+// 2019-07-30, AAPL + MSFT, ~200KB, 2,935 real messages). Mirrors main.cpp's
+// single-ticker pipeline exactly (resolve locate via Stock Directory,
+// OrderBook + FeatureEngine + ItchParser::parse_file, write_csv).
+//
+// Verified 2026-07-24 to catch real parser regressions: deliberately
+// misaligning the 'A' message's price read by 4 bytes (msg+32 -> msg+28)
+// makes this test fail with a byte-level diff, as expected for a live
+// wire-format bug. NOTE: it does NOT catch a literal replay of the original
+// item-4 "4-byte stock field" bug (AddOrderMsg.stock truncated to 4 chars) —
+// that bug only ever affected the AddOrderMsg.stock struct field, which
+// nothing in today's pipeline reads (ticker filtering uses stock_locate, not
+// the stock string, since the Task 2 refactor). Confirmed empirically:
+// reverting that exact historical diff and rerunning this test produces
+// byte-identical output. Kept as an honest record rather than silently
+// claiming coverage this test doesn't have — see results/OFI_STUDY.md
+// "Blocker 1" for the related retraction this finding triggered.
+static void run_fixture_pipeline(const std::string& ticker, const std::string& expected_path) {
+    const std::string fixture_bin = "../test/fixtures/itch_sample_slice.bin";
+    const std::string actual_path = "/tmp/lob_test_fixture_actual_" + ticker + ".csv";
+
+    auto locates = ItchParser::parse_stock_directory(fixture_bin);
+    uint16_t locate = 0;
+    bool found = false;
+    for (const auto& [loc, sym] : locates) {
+        if (sym == ticker) { locate = loc; found = true; break; }
+    }
+    assert(found && "ticker not found in fixture's Stock Directory");
+
+    OrderBook     book(ticker);
+    FeatureEngine features;
+
+    ParserCallbacks cb;
+    cb.on_add = [&](const AddOrderMsg& m) {
+        book.add_order(m.timestamp_ns, m.order_ref, m.side, m.shares, m.price);
+        features.on_book_update(book, m.timestamp_ns);
+    };
+    cb.on_delete = [&](const DeleteOrderMsg& m) {
+        book.delete_order(m.timestamp_ns, m.order_ref);
+        features.on_book_update(book, m.timestamp_ns);
+    };
+    cb.on_replace = [&](const ReplaceOrderMsg& m) {
+        book.replace_order(m.timestamp_ns, m.old_order_ref, m.new_order_ref,
+                           m.new_shares, m.new_price);
+        features.on_book_update(book, m.timestamp_ns);
+    };
+    cb.on_execute = [&](const ExecuteOrderMsg& m) {
+        features.on_trade('B', m.executed_shares, m.timestamp_ns);
+        book.execute_order(m.timestamp_ns, m.order_ref, m.executed_shares);
+        features.on_book_update(book, m.timestamp_ns);
+    };
+    cb.on_cancel = [&](const CancelOrderMsg& m) {
+        book.cancel_order(m.timestamp_ns, m.order_ref, m.canceled_shares);
+        features.on_book_update(book, m.timestamp_ns);
+    };
+
+    ItchParser::parse_file(fixture_bin, cb, {locate});
+    features.write_csv(actual_path);
+
+    std::ifstream actual_f(actual_path, std::ios::binary);
+    std::ifstream expected_f(expected_path, std::ios::binary);
+    assert(actual_f.good() && "failed to open actual output");
+    assert(expected_f.good() && "failed to open expected fixture — did you run from build_audit/?");
+
+    std::stringstream actual_ss, expected_ss;
+    actual_ss << actual_f.rdbuf();
+    expected_ss << expected_f.rdbuf();
+
+    if (actual_ss.str() != expected_ss.str()) {
+        std::cerr << "MISMATCH for " << ticker << ": actual output does not match "
+                  << expected_path << " byte-for-byte.\n"
+                  << "  actual:   " << actual_path << " (" << actual_ss.str().size() << " bytes)\n"
+                  << "  expected: " << expected_path << " (" << expected_ss.str().size() << " bytes)\n";
+        assert(false && "golden fixture mismatch — see stderr above");
+    }
+
+    remove(actual_path.c_str());
+    std::cout << "PASS test_golden_fixture_pipeline[" << ticker << "]\n";
+}
+
+static void test_golden_fixture_pipeline() {
+    run_fixture_pipeline("AAPL", "../test/fixtures/expected_features_AAPL.csv");
+    run_fixture_pipeline("MSFT", "../test/fixtures/expected_features_MSFT.csv");
+}
+
 int main() {
     test_basic_top_of_book();
     test_bid_levels_ordering();
@@ -394,6 +484,7 @@ int main() {
     test_stock_locate_resolution();
     test_locate_filter_excludes_other_symbol();
     test_replace_and_cross_ticker_order_ref_collision();
-    std::cout << "\nAll 13 tests passed.\n";
+    test_golden_fixture_pipeline();
+    std::cout << "\nAll 14 tests passed.\n";
     return 0;
 }

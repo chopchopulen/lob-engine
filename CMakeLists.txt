@@ -33,6 +33,7 @@ target_include_directories(lob_engine PRIVATE include)
 add_executable(lob_bench
     bench/bench_book.cpp
     bench/bench_pipeline.cpp
+    bench/bench_parser.cpp
     src/feed/itch_parser.cpp
     src/book/order_book.cpp
     src/features/feature_engine.cpp
