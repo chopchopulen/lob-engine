@@ -1,3 +1,8 @@
+> **Note (2026-07-23):** The benchmark figures cited below (41/42/83/84ns etc.) were measured
+> with a harness later found to be timer-resolution-limited on Apple Silicon (~41.667ns
+> hardware tick) — historical record, not current numbers. Superseded; current figures live in
+> `bench/BASELINE.md`.
+
 # Flat Price Level Array — Design Spec
 **Date:** 2026-04-29
 **Scope:** Replace `std::map` with a hybrid flat sorted array + overflow map for price levels in `OrderBook`

@@ -1,3 +1,8 @@
+> **Note (2026-07-23):** The benchmark figures cited below (41/42/83/84ns etc.) were measured
+> with a harness later found to be timer-resolution-limited on Apple Silicon (~41.667ns
+> hardware tick) — historical record, not current numbers. Superseded; current figures live in
+> `bench/BASELINE.md`.
+
 # Flat Price Level Array Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

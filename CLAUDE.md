@@ -1,8 +1,14 @@
 # lob-engine
 
 Benchmarked C++17 Nasdaq ITCH 5.0 limit order book reconstruction engine. Its
-benchmark numbers (median ~41ns latency, ~7.8M msg/s, 226M+ ITCH messages replayed)
-are on the user's resume — **nothing about them may silently regress**.
+benchmark numbers (BM_FullPipeline: 16.93ns p50 / 17.17ns mean, ~7.8M msg/s,
+226M+ ITCH messages replayed) are on the user's resume — **nothing about them
+may silently regress**.
+
+`bench/BASELINE.md` is the single source of truth for benchmark numbers. Per-op
+timing on this platform is tick-quantized (Apple Silicon ~41.667ns hardware
+timer resolution); reported percentiles are grouped-batch (128-op window), not
+single-operation percentiles — see BASELINE.md for full methodology.
 
 ## Rules
 

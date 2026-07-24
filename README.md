@@ -67,6 +67,12 @@ Done.
 Features written to: data/features_AAPL.csv
 ```
 
+**Note:** the 226M messages / 7.8M msg/s / 29.0s figures above are pending re-verification —
+no raw ITCH file is currently available locally to rerun this end-to-end measurement. This is
+an aggregate wall-clock figure, unaffected by the per-op benchmark harness issue described
+below; it is simply unconfirmed on this machine since the last audit. See
+[`bench/BASELINE.md`](bench/BASELINE.md) for detail.
+
 Then run the regression analysis:
 
 ```bash
@@ -75,17 +81,35 @@ python3 scripts/analysis.py data/features_AAPL.csv
 
 ## Benchmark Results
 
-Measured on Apple M-series (arm64), single core, release build (`-O2`).
+Measured on Apple Silicon (arm64), single core, release build (`-O2`), via the grouped-batch
+harness described in [Benchmark methodology](#benchmark-methodology) below. Full detail,
+methodology, and reproduction steps: [`bench/BASELINE.md`](bench/BASELINE.md).
+
+Headline figure — `BM_FullPipeline` (the dominant message type, ~60% of ITCH traffic):
 
 | Metric | Value |
 |---|---|
-| Messages processed | 226M |
-| Throughput | 7.8M msg/s |
-| Median per-message latency | 41 ns |
-| p99 per-message latency | 84 ns |
-| Pipeline latency reduction (flat array vs. `std::map`) | −11% at depth 20 |
+| Mean per-message latency | 17.17 ns |
+| Median (p50) per-message latency | 16.93 ns |
+| Grouped-batch p99 (128-op window) | 22.46 ns |
+| Grouped-batch p999 (128-op window) | 45.90 ns |
+| Messages processed (end-to-end, pending re-verification) | 226M |
+| Throughput (end-to-end, pending re-verification) | 7.8M msg/s |
 
-The flat sorted-array book representation eliminates pointer-chasing and improves cache locality at the common case of 5–20 active price levels per side.
+The flat sorted-array book representation eliminates pointer-chasing and improves cache
+locality at the common case of 5–20 active price levels per side; see `bench/BASELINE.md`
+Phase 4 for the measured effect of the pool-allocator fix on `orders_` lookup.
+
+## Benchmark methodology
+
+Per-op timing on this hardware is quantized to the platform's measured ~41.667ns timer tick
+(`mach_timebase_info` numer=125 denom=3, confirmed empirically — there is no userspace cycle
+counter available on Apple Silicon). The harness therefore times 128-op groups with 500 warmup
+groups discarded per run, rather than timing single operations directly. Reported percentiles
+are consequently percentiles of *per-op-equivalent group means*, not single-operation
+percentiles — a real tail event in one op is damped, not eliminated, by averaging over its
+128-op window. See [`bench/BASELINE.md`](bench/BASELINE.md) for the full derivation, rationale,
+and acceptance test.
 
 ## Research Results
 
