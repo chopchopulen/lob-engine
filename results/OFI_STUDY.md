@@ -81,19 +81,44 @@ Cont/Kukanov/Stoikov find OFI explains **contemporaneous** price changes with R�
 | AAPL | **0.4515** | **0.3509** |
 | AMZN | — | **0.0011** |
 
-**AAPL lands squarely in the literature's range — the OFI implementation is sound.** The
-original full-day (incl. extended hours) contemporaneous check comes back much lower (R²≈0.05
-on AAPL), confirming pre/post-market contamination — not an implementation bug — was
-suppressing the signal in the original study.
+**RETRACTED, 2026-07-24, after "Blocker 1" below: "AAPL lands squarely in the literature's
+range — the OFI implementation is sound" was the wrong conclusion, for a specific and
+important reason, not just because the data turned out to be stale in general.**
 
-**AMZN is an open question, not re-litigated further here.** Its contemporaneous R² (0.0011,
-pooled across all 7 regular-hours days) is far below both the literature range and AAPL's own
-result, using the identical code path validated as correct on AAPL. Its `mid_price` and `ofi`
-distributions look structurally normal (89% zero-OFI seconds vs AAPL's 96%, comparable in
-kind) — nothing in the raw data points to a parsing or computation defect. This is recorded as
-an **observation**, not explained: it may be a genuine per-instrument liquidity/tick-size
-effect (AMZN traded near $1,859 in this window vs AAPL's $321, a different price-to-tick
-ratio), or something else not yet investigated. No mechanism is asserted without further data.
+AAPL's contemporaneous R² of 0.35–0.45 does **not** validate the OFI construction, and the
+reason is worth stating precisely rather than just noting "the data was bad": `ofi` and
+`mid_price` in this CSV were **both computed from the same corrupted book reconstruction** —
+the same misaligned-read parser produced both columns, in the same process, from the same
+(wrong) `best_bid_price`/`best_ask_price` values. Regressing one corrupted-but-internally-
+consistent derived series against another corrupted-but-internally-consistent derived series
+from the same source does not test whether the reconstruction is *correct* — it tests whether
+`ofi` and `mid_price` move together, which they will if they're both functions of the same
+(wrong) underlying state, corrupt or not. Landing in the literature's plausible range was
+coincidence, not confirmation: two numbers derived from the same broken pipeline correlating
+with each other, in a way that happened to resemble a published result, looks exactly like
+success and is not.
+
+**The lesson, stated explicitly so it doesn't get re-learned the hard way:** matching a
+published result is not a correctness check on a data pipeline. It's a check that two
+quantities correlate the way theory says they should — which corrupted-but-self-consistent
+data can satisfy just as well as correct data, precisely because both quantities came from the
+same corruption. The check that actually caught the bug was **inspecting the reconstructed
+intermediate object directly** — printing `quoted_spread` and finding it was $429,492 on a
+$321 stock (Blocker 1, Step (c) below). That check doesn't compare against a downstream
+statistical target at all; it asks "is this intermediate value physically plausible," which a
+regression R² landing in a plausible range cannot answer. Any future validation step for this
+pipeline should default to inspecting intermediates (book state, spread, price levels)
+directly, and treat a good R² as at best a weak, easily-fooled secondary signal — never as the
+primary correctness evidence. This is now enforced automatically via `scripts/validate_book.py`
+(see `PROJECT_STATUS.md`), which runs on every regeneration specifically because a human
+checking "did the R² look reasonable" is exactly the check that failed here.
+
+**AMZN's contemporaneous R² (0.0011) is consequently no longer a distinguished "open
+question."** It doesn't need a separate explanation from AAPL's: both were computed on the
+same class of corrupted data, and the corruption's effect on any given derived quantity depends
+on the specific bytes involved (see "why this plausibly explains the AAPL-vs-AMZN asymmetry"
+below) — a low R² and a coincidentally-plausible R² are both explained by the same root cause,
+not two different phenomena requiring two different stories.
 
 **Conclusion: implementation validated via AAPL. Proceeding to the corrected split, per the
 instructed branch ("if high, the implementation is likely sound").**

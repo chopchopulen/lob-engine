@@ -34,14 +34,30 @@ int main(int argc, char* argv[]) {
 
     const std::string itch_file = argv[1];
 
-    // ── Single-ticker mode (unchanged) ────────────────────────────────────
+    // ── Single-ticker mode ─────────────────────────────────────────────────
     if (argc == 4) {
         const std::string ticker     = argv[2];
         const std::string output_csv = argv[3];
 
+        // Resolve ticker -> stock_locate via the file's Stock Directory ('R')
+        // messages. Filtering is then done on stock_locate for every message
+        // type (see ItchParser::parse_file) — not on order_ref lookup misses.
+        auto locate_map = ItchParser::parse_stock_directory(itch_file);
+        uint16_t locate = 0;
+        bool found = false;
+        for (const auto& [loc, sym] : locate_map) {
+            if (sym == ticker) { locate = loc; found = true; break; }
+        }
+        if (!found) {
+            std::cerr << "Error: ticker \"" << ticker << "\" not found in this file's "
+                      << "Stock Directory ('R') messages. " << locate_map.size()
+                      << " symbols were found in the directory.\n";
+            return 1;
+        }
+
         std::cout << "LOB Engine — Nasdaq ITCH 5.0 Parser\n"
                   << "  File:    " << itch_file  << "\n"
-                  << "  Ticker:  " << ticker     << "\n"
+                  << "  Ticker:  " << ticker << " (stock_locate=" << locate << ")\n"
                   << "  Output:  " << output_csv << "\n\n";
 
         OrderBook      book(ticker);
@@ -81,7 +97,7 @@ int main(int argc, char* argv[]) {
 
         auto t0 = std::chrono::steady_clock::now();
         try {
-            ItchParser::parse_file(itch_file, cb, ticker);
+            ItchParser::parse_file(itch_file, cb, {locate});
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << "\n";
             return 1;
@@ -113,15 +129,30 @@ int main(int argc, char* argv[]) {
     const std::string ticker2    = argv[3];
     const std::string output_csv = argv[4];
 
+    // Resolve both tickers -> stock_locate up front. Every message (including
+    // D/U/E/C/X) carries its own stock_locate, so routing below needs no
+    // order_ref bookkeeping — the old order_route map (an implicit, unverified
+    // "filter by hoping order_ref never collides across tickers" mechanism)
+    // is gone.
+    auto locate_map = ItchParser::parse_stock_directory(itch_file);
+    uint16_t locate1 = 0, locate2 = 0;
+    bool found1 = false, found2 = false;
+    for (const auto& [loc, sym] : locate_map) {
+        if (sym == ticker1) { locate1 = loc; found1 = true; }
+        if (sym == ticker2) { locate2 = loc; found2 = true; }
+    }
+    if (!found1 || !found2) {
+        std::cerr << "Error: " << (!found1 ? ticker1 : ticker2)
+                  << " not found in this file's Stock Directory ('R') messages. "
+                  << locate_map.size() << " symbols were found in the directory.\n";
+        return 1;
+    }
+
     std::cout << "LOB Engine — Cross-Asset Mode\n"
               << "  File:    " << itch_file  << "\n"
-              << "  Ticker1: " << ticker1    << "\n"
-              << "  Ticker2: " << ticker2    << "\n"
+              << "  Ticker1: " << ticker1 << " (stock_locate=" << locate1 << ")\n"
+              << "  Ticker2: " << ticker2 << " (stock_locate=" << locate2 << ")\n"
               << "  Output:  " << output_csv << "\n\n";
-
-    // order_ref → 0 (ticker1) or 1 (ticker2)
-    std::unordered_map<uint64_t, uint8_t> order_route;
-    order_route.reserve(1 << 20);
 
     OrderBook     book1(ticker1), book2(ticker2);
     FeatureEngine feat1, feat2;
@@ -130,15 +161,11 @@ int main(int argc, char* argv[]) {
     ParserCallbacks cb;
 
     cb.on_add = [&](const AddOrderMsg& m) {
-        // m.stock holds the full (up to 8-char) ticker — see itch_parser.cpp.
-        std::string stk(m.stock);
-        if (stk == ticker1) {
-            order_route[m.order_ref] = 0;
+        if (m.stock_locate == locate1) {
             book1.add_order(m.timestamp_ns, m.order_ref, m.side, m.shares, m.price);
             feat1.on_book_update(book1, m.timestamp_ns);
             ++cnt1;
-        } else if (stk == ticker2) {
-            order_route[m.order_ref] = 1;
+        } else {
             book2.add_order(m.timestamp_ns, m.order_ref, m.side, m.shares, m.price);
             feat2.on_book_update(book2, m.timestamp_ns);
             ++cnt2;
@@ -146,11 +173,7 @@ int main(int argc, char* argv[]) {
     };
 
     cb.on_delete = [&](const DeleteOrderMsg& m) {
-        auto it = order_route.find(m.order_ref);
-        if (it == order_route.end()) return;
-        uint8_t idx = it->second;
-        order_route.erase(it);
-        if (idx == 0) {
+        if (m.stock_locate == locate1) {
             book1.delete_order(m.timestamp_ns, m.order_ref);
             feat1.on_book_update(book1, m.timestamp_ns);
             ++cnt1;
@@ -162,12 +185,9 @@ int main(int argc, char* argv[]) {
     };
 
     cb.on_replace = [&](const ReplaceOrderMsg& m) {
-        auto it = order_route.find(m.old_order_ref);
-        if (it == order_route.end()) return;
-        uint8_t idx = it->second;
-        order_route.erase(it);
-        order_route[m.new_order_ref] = idx;
-        if (idx == 0) {
+        // stock_locate on a replace refers to the same instrument as the
+        // order being replaced — ITCH 5.0 never changes instrument on 'U'.
+        if (m.stock_locate == locate1) {
             book1.replace_order(m.timestamp_ns, m.old_order_ref, m.new_order_ref,
                                 m.new_shares, m.new_price);
             feat1.on_book_update(book1, m.timestamp_ns);
@@ -181,10 +201,7 @@ int main(int argc, char* argv[]) {
     };
 
     cb.on_execute = [&](const ExecuteOrderMsg& m) {
-        auto it = order_route.find(m.order_ref);
-        if (it == order_route.end()) return;
-        uint8_t idx = it->second;
-        if (idx == 0) {
+        if (m.stock_locate == locate1) {
             feat1.on_trade('B', m.executed_shares, m.timestamp_ns);
             book1.execute_order(m.timestamp_ns, m.order_ref, m.executed_shares);
             feat1.on_book_update(book1, m.timestamp_ns);
@@ -198,10 +215,7 @@ int main(int argc, char* argv[]) {
     };
 
     cb.on_cancel = [&](const CancelOrderMsg& m) {
-        auto it = order_route.find(m.order_ref);
-        if (it == order_route.end()) return;
-        uint8_t idx = it->second;
-        if (idx == 0) {
+        if (m.stock_locate == locate1) {
             book1.cancel_order(m.timestamp_ns, m.order_ref, m.canceled_shares);
             feat1.on_book_update(book1, m.timestamp_ns);
             ++cnt1;
@@ -215,7 +229,7 @@ int main(int argc, char* argv[]) {
     // ── Parse ─────────────────────────────────────────────────────────────
     auto t0 = std::chrono::steady_clock::now();
     try {
-        ItchParser::parse_file(itch_file, cb);  // no filter — routing done above
+        ItchParser::parse_file(itch_file, cb, {locate1, locate2});
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;

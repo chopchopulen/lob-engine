@@ -53,6 +53,9 @@ inline void read_stock(const uint8_t* p, char out[5]) {
 
 // Parsed from 'A' message (36 bytes total in ITCH)
 struct AddOrderMsg {
+    uint16_t stock_locate;    // exchange-assigned locate code — the real per-message
+                              // symbol key (see StockDirectoryMsg); stock[] below is
+                              // kept for display/logging, not for filtering
     uint64_t timestamp_ns;   // nanoseconds since midnight
     uint64_t order_ref;      // unique order ID assigned by exchange
     char     side;           // 'B' = buy, 'S' = sell
@@ -63,13 +66,17 @@ struct AddOrderMsg {
 
 // Parsed from 'D' message (19 bytes total)
 struct DeleteOrderMsg {
+    uint16_t stock_locate;
     uint64_t timestamp_ns;
     uint64_t order_ref;
 };
 
 // Parsed from 'U' message (35 bytes total)
-// A replace is: cancel old order, add new order at potentially different price/qty
+// A replace is: cancel old order, add new order at potentially different price/qty.
+// stock_locate refers to the SAME stock as the order being replaced — ITCH 5.0
+// does not allow a replace to change the underlying instrument.
 struct ReplaceOrderMsg {
+    uint16_t stock_locate;
     uint64_t timestamp_ns;
     uint64_t old_order_ref;
     uint64_t new_order_ref;
@@ -80,6 +87,7 @@ struct ReplaceOrderMsg {
 // Parsed from 'E' message (31 bytes total)
 // Partial or full execution — some shares traded at this order's price
 struct ExecuteOrderMsg {
+    uint16_t stock_locate;
     uint64_t timestamp_ns;
     uint64_t order_ref;
     uint32_t executed_shares;
@@ -89,7 +97,19 @@ struct ExecuteOrderMsg {
 // Order Cancel — a PARTIAL cancel (reduces shares), distinct from 'D' Delete
 // (which removes the order entirely). No trade occurs.
 struct CancelOrderMsg {
+    uint16_t stock_locate;
     uint64_t timestamp_ns;
     uint64_t order_ref;
     uint32_t canceled_shares;
+};
+
+// Parsed from 'R' Stock Directory message (39 bytes total in ITCH 5.0).
+// One per listed instrument, normally sent once at the start of the session
+// before any trading messages. This is the authoritative locate->symbol
+// mapping; only stock_locate and stock are needed downstream, so the
+// remaining ~20 bytes of market-category/classification/LULD-tier fields
+// are read past but not decoded (not needed by this engine).
+struct StockDirectoryMsg {
+    uint16_t stock_locate;
+    char     stock[9];   // ticker symbol, right-padded with spaces in the wire format
 };

@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include "feed/itch_types.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,10 +35,27 @@ struct ParserCallbacks {
 
 class ItchParser {
 public:
+    // Read the file once, decoding only 'R' Stock Directory messages, and
+    // return the locate -> symbol map. Symbols are trimmed of trailing
+    // padding spaces (e.g. "AAPL"). Real ITCH feeds send these once per
+    // listed instrument at the start of the session, before any trading
+    // messages — but this scans the whole file so it's correct even if
+    // that isn't true of a given file.
+    static std::unordered_map<uint16_t, std::string>
+    parse_stock_directory(const std::string& path);
+
     // Parse the full file, firing callbacks for each relevant message.
-    // Returns number of messages processed.
-    // filter_stock: if non-empty, only fire callbacks for this ticker (e.g. "AAPL")
+    // Returns number of messages processed (i.e. messages for which a
+    // callback fired, after filtering).
+    //
+    // filter_locates: if non-empty, only fire callbacks for messages whose
+    // stock_locate is in this set. Filtering is applied uniformly to EVERY
+    // message type ('A'/'F'/'D'/'U'/'E'/'C'/'X') via each message's own
+    // stock_locate field — there is no reliance on order_ref lookups
+    // happening to miss for other instruments' orders (that was the old,
+    // implicit, unverified filtering mechanism this replaces).
+    // Empty set (default) means no filtering — fire everything.
     static size_t parse_file(const std::string& path,
                              const ParserCallbacks& cb,
-                             const std::string& filter_stock = "");
+                             const std::unordered_set<uint16_t>& filter_locates = {});
 };
