@@ -6,14 +6,21 @@ the whole project. Detail lives in `bench/BASELINE.md` (perf) and `results/OFI_S
 
 > **⚠ All OFI/research numbers below are provisional as of 2026-07-24.** The `data/` CSVs they
 > were computed from were found to be stale and corrupted (`quoted_spread` values in the
-> hundreds of thousands of dollars). The originally-claimed mechanism (a 4-byte vs 8-byte
-> stock-field parser bug misaligning the `price` read) **is retracted, 2026-07-24** — checked
-> against the actual commit diff and found unsupported; the real byte offsets for `price` never
-> changed, before or after that fix. The true cause of the stale-data corruption is unknown
-> (see `results/OFI_STUDY.md` "Blocker 1" for the correction and what's still known vs. not).
-> This affects every research number in this file, the OFI study, and README's Research
-> Results section regardless of mechanism. Perf/benchmark numbers are unaffected (unrelated
-> code path).
+> hundreds of thousands of dollars). **Root cause confirmed 2026-07-24 by direct reproduction**
+> (an earlier claim — a 4-byte vs 8-byte stock-field bug misaligning the `price` read — was
+> checked against the commit diff, found unsupported, and retracted; it has now been replaced
+> with a confirmed mechanism, not left open): the pre-Task-2 parser applied no ticker filtering
+> to `'D'`/`'U'`/`'E'`/`'C'`/`'X'` messages, delivering every such message for every ticker to
+> whichever single book was open. Running the actual pre-fix binary against a real Nasdaq BX
+> sample reproduced the exact corruption (92.2% of MSFT's rows, 2.5% of AAPL's). This is fixed
+> in current code by this session's Task 2 (`stock_locate` filtering, commit `3253443`),
+> confirmed by replaying the same real file through today's code with zero corrupted rows. See
+> `results/OFI_STUDY.md` "Blocker 1" for the full reproduction. This affects every research
+> number in this file, the OFI study, and README's Research Results section regardless of when
+> a given file was generated relative to the fix. Perf/benchmark numbers are unaffected
+> (unrelated code path). **Regeneration is no longer blocked on an unknown cause** — the cause
+> is confirmed and fixed — but has not been performed as part of this correction; see
+> "Unverified / blocked" below for the regeneration pipeline and its current state.
 
 ## Lesson learned (2026-07-24) — this is the most valuable thing in the whole audit
 
@@ -46,7 +53,7 @@ stale-data finding and must be recomputed once fresh CSVs exist:
 
 | Number (provisional, do not cite) | Source | Why not claimable |
 |---|---|---|
-| AAPL contemporaneous OFI→return R²: 0.35 / 0.45 | `results/OFI_STUDY.md` Step 2B | Computed on stale, corrupted `data/features_AAPL.csv`; cause of corruption unconfirmed (see Blocker 1) |
+| AAPL contemporaneous OFI→return R²: 0.35 / 0.45 | `results/OFI_STUDY.md` Step 2B | Computed on stale, corrupted `data/features_AAPL.csv`; cause of corruption now confirmed and fixed (see Blocker 1), but this specific number was not recomputed post-fix |
 | AAPL predictive OFI→return R²_out ≈ 0 | `results/OFI_STUDY.md` Step 2F | Same — methodology (day-level split, HAC) is correct and reusable, the number itself is not |
 | AMZN predictive OFI→return R²_out ≈ 0.3%, HAC(5) p<0.0001 | `results/OFI_STUDY.md` Step 2F | Same, plus: even if the data were clean, 0.3% R² at this N is statistically significant but economically negligible — not evidence of a tradeable signal |
 
@@ -76,12 +83,15 @@ per-op timed). To re-verify when a file is available:
 raw-ITCH-file blocker as above. `data/features_AAPL.csv` (mtime 2026-05-04) and
 `data/panel_AAPL.csv` (mtime 2026-06-13) have a corrupted reconstructed book (verified via
 `quoted_spread` — a large fraction of rows show `uint32_t`-underflowed spreads in the hundreds
-of thousands of dollars, across all 5 tickers checked). **The cause is not confirmed** — an
-earlier claim that this traces to commit `257956e`'s stock-field fix does not hold up against
-the actual diff (see `results/OFI_STUDY.md` "Blocker 1"); no change in this repo's git history
-explains the corruption. Today's engine code is confirmed correct on both synthetic data and a
-real Nasdaq BX venue sample (see Task 3 below), so the corruption is specific to however those
-particular files were generated, not to any currently-live code path.
+of thousands of dollars, across all 5 tickers checked). **The cause is now confirmed**: every
+CSV in `data/` predates this session's Task 2 (`stock_locate` filtering, commit `3253443`),
+which is the actual fix — not the earlier-claimed, since-retracted item-4 stock-field bug.
+Before Task 2, the parser delivered every `'D'`/`'U'`/`'E'`/`'C'`/`'X'` message for every
+ticker to whichever single book was open, unfiltered; confirmed by reproducing the exact
+corruption running the pre-fix binary against real Nasdaq BX data, and confirmed fixed by
+running today's code against the same file with zero corrupted rows (`results/OFI_STUDY.md`
+"Blocker 1"). Today's engine code is confirmed correct on both synthetic data and real BX
+venue data. Regeneration is unblocked — the cause is fixed — but has not been carried out yet.
 
 **Regeneration is now a two-step, staging-gated pipeline (2026-07-24) — never a direct write
 to `data/` by default.** This exists because testing the regeneration script against a real
@@ -135,15 +145,18 @@ day) at a time, so rebuilding a `panel_*.csv` means running it once per day and 
   DeleteOrder cv=96.93%, with no clean relationship to op cost, op type, or anything else
   checked so far. Recorded as an observation only — no mechanism should be assumed or cited
   until it's actually tested.
-- **AMZN's contemporaneous OFI→return R² is still unexplained, and so is the AAPL-vs-AMZN
-  asymmetry** — partially resolved 2026-07-24, then partially re-opened: it's confirmed that
-  both AAPL and AMZN's numbers were computed on corrupted, stale data (affects all 5 tickers
-  checked, not AMZN-specific), and confirmed that AAPL's plausible-looking R² was never valid
-  evidence of a correct pipeline regardless of mechanism (see "Lesson learned" above). But the
-  *specific* root cause of the corruption, and therefore any explanation of why it hit AMZN
-  harder than AAPL, is retracted — the mechanism previously claimed (item-4 parser bug) does
-  not hold up against the actual commit diff. See `results/OFI_STUDY.md` "Blocker 1" for the
-  correction. Genuinely open until fresh data is regenerated and re-checked.
+- ~~AMZN's contemporaneous OFI→return R² unexplained, root cause of ticker-asymmetric
+  corruption unknown~~ — **resolved 2026-07-24 by direct reproduction** (superseding an
+  intermediate retraction that left this genuinely open): the pre-Task-2 parser delivered every
+  `'D'`/`'U'`/`'E'`/`'C'`/`'X'` message, for every ticker, to whichever single book was open,
+  with no ticker filtering at all — confirmed by running the actual pre-fix binary against real
+  BX data (92.2% of MSFT's rows corrupted, 2.5% of AAPL's). Confirmed fixed in current code
+  (Task 2, `stock_locate` filtering, commit `3253443`) via the same real-data test. The
+  *precise* reason `order_ref` collisions occur this frequently on real data (venue-specific
+  numbering, ID reuse, or something else) is not further characterized, and AAPL's
+  plausible-looking R² is still never valid evidence of a correct pipeline regardless of
+  mechanism (see "Lesson learned" above) — but the corruption mechanism itself is no longer
+  open. See `results/OFI_STUDY.md` "Blocker 1" for the full reproduction.
 - ~~Parser relied on `order_ref` global uniqueness across tickers, unverified against real
   data~~ — **fixed 2026-07-24**: `stock_locate` is now parsed from the ITCH Stock Directory
   (`'R'`) messages and used to filter every message type (`'A'`/`'F'`/`'D'`/`'U'`/`'E'`/`'C'`/

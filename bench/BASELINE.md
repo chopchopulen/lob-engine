@@ -341,8 +341,9 @@ The real, harness-validated delta is in the "Phase 4" section above.
 **Why this exists:** every other benchmark in this file exercises `OrderBook`/`FeatureEngine`
 directly — none of them ever call `itch_parser.cpp`. When the `stock_locate` refactor changed
 the parser (`PROJECT_STATUS.md`), rerunning this file's benchmarks against it was a null test
-by construction. This is the missing component-level counterpart to the engine's end-to-end
-throughput claim (226M msg / 7.8M msg/s, itself still unverified — see `PROJECT_STATUS.md`).
+by construction. This closes that specific coverage gap — it measures the parser in isolation
+on real data. It is **not** a component-level breakdown of the 226M-msg/7.8M-msg/s end-to-end
+claim (see below for exactly why not) — that figure remains separately, fully unverified.
 
 **Measured on:** Nasdaq BX ITCH sample, 2019-07-30
 (`https://emi.nasdaq.com/ITCH/Nasdaq%20BX%20ITCH/20190730.BX_ITCH_50.gz`, ~373MB compressed /
@@ -375,9 +376,20 @@ Event, quoting/auction messages, are read and skipped but not counted in this to
 p50/p99 stability section above); this workload's dominant cost is CPU-bound field decode +
 callback dispatch on an OS-page-cache-warm file, not the same kind of rare-tail-event noise.
 
-**Sanity check against the end-to-end claim:** 15.72M msgs/sec (parsing alone) is roughly 2x
-the claimed 7.8M msg/s end-to-end figure — directionally consistent with parsing being a
-meaningful but not majority share of full-pipeline (`parse` + `OrderBook` + `FeatureEngine`)
-per-message cost. This is a plausibility check, not a verification of the 7.8M msg/s figure
-itself, which remains blocked on the same missing-raw-file constraint documented in
-`PROJECT_STATUS.md`.
+**This figure does not support, validate, or replace the 226M-msg/7.8M-msg/s end-to-end
+claim, and should not be read as doing so.** They are two different measurements of two
+different things on two different data sources:
+
+| | Parser throughput (this section) | End-to-end throughput claim |
+|---|---|---|
+| What's measured | Raw message parsing only — `itch_parser.cpp` scanning + field decode + callback dispatch | Full pipeline — parse + `OrderBook` reconstruction + `FeatureEngine` computation |
+| Data | Nasdaq **BX** (a small regional venue), 2019-07-30, ~28.7M messages | Nasdaq **main feed** (implied by "226M messages"), venue/date unspecified in the original claim |
+| Status | Measured this session, reproducible via the command above | Still separately unverified — no raw main-feed file available locally (see `PROJECT_STATUS.md`) |
+
+BX carries a small fraction of main-feed volume and message-type mix (see
+`PROJECT_STATUS.md` Task 1 for venue size comparisons); parser throughput on a low-volume
+venue sample is not a proxy for full-pipeline throughput on main-feed volume. The two numbers
+happening to be within 2x of each other (15.72M vs 7.8M) is not evidence for either one — it
+is not a validation, and no claim of consistency between them should be drawn from it. The
+226M/7.8M end-to-end figure remains exactly as unverified as before this benchmark existed,
+pending an actual main-feed run once a raw file is available.
