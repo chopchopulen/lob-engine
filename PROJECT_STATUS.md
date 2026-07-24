@@ -18,9 +18,14 @@ the whole project. Detail lives in `bench/BASELINE.md` (perf) and `results/OFI_S
 > `results/OFI_STUDY.md` "Blocker 1" for the full reproduction. This affects every research
 > number in this file, the OFI study, and README's Research Results section regardless of when
 > a given file was generated relative to the fix. Perf/benchmark numbers are unaffected
-> (unrelated code path). **Regeneration is no longer blocked on an unknown cause** — the cause
-> is confirmed and fixed — but has not been performed as part of this correction; see
-> "Unverified / blocked" below for the regeneration pipeline and its current state.
+> (unrelated code path).
+>
+> **UPDATE, 2026-07-24 (later same day): regeneration has now been performed for one main-feed
+> date (2019-12-30) and the contemporaneous OFI construction is validated on real data**
+> (AAPL R²=0.62). `data/features_{AAPL,AMZN,NFLX,WDAY}.csv` are now real, verified-correct data
+> — see "Claimable numbers" below. The multi-date *predictive* study (day-level split,
+> walk-forward, HAC) has deliberately NOT been rerun — one date can't support a cross-date
+> split — and remains provisional pending a decision on the full panel.
 
 ## Lesson learned (2026-07-24) — this is the most valuable thing in the whole audit
 
@@ -48,13 +53,20 @@ that — positive, non-crossed, sub-dollar spreads — before any new data is tr
 | Per-benchmark mean/p50 for all 8 benchmarks | `bench/BASELINE.md` Phase 3 table | cv ≤2.81% across 8 reps — stable, safe to cite single-sample |
 | Pool-allocator fix: -28% to -54% mean latency reduction (5 of 6 op-touching benchmarks) | `bench/BASELINE.md` Phase 4 | ExecuteOrder correctly shows ~0% (never touches `orders_` insert/erase) — not a partial fix |
 
-**No OFI/research number is currently claimable.** Every candidate below is blocked by the
-stale-data finding and must be recomputed once fresh CSVs exist:
+**Contemporaneous OFI construction validation is now claimable — the first real research
+result this project has had:**
+
+| Number | Source | Required caveat |
+|---|---|---|
+| AAPL contemporaneous OFI→return R²=0.62 (2019-12-30, regular session) | `results/OFI_STUDY.md` "Real construction validation" | Single date, main-feed, verified-correct data (`scripts/validate_book.py` passed). Construction validation only — not a predictive/tradeable claim |
+| AMZN R²=0.33, NFLX R²=0.29, WDAY R²=0.16 (same date) | Same | Clean liquidity gradient consistent with theory; same single-date caveat |
+
+**No predictive/multi-date OFI number is currently claimable** — one date can't support a
+cross-date split. Every predictive number below is retired pending the full panel:
 
 | Number (provisional, do not cite) | Source | Why not claimable |
 |---|---|---|
-| AAPL contemporaneous OFI→return R²: 0.35 / 0.45 | `results/OFI_STUDY.md` Step 2B | Computed on stale, corrupted `data/features_AAPL.csv`; cause of corruption now confirmed and fixed (see Blocker 1), but this specific number was not recomputed post-fix |
-| AAPL predictive OFI→return R²_out ≈ 0 | `results/OFI_STUDY.md` Step 2F | Same — methodology (day-level split, HAC) is correct and reusable, the number itself is not |
+| AAPL predictive OFI→return R²_out ≈ 0 | `results/OFI_STUDY.md` Step 2F | Methodology (day-level split, HAC) is correct and reusable; computed on now-superseded stale data, not recomputed |
 | AMZN predictive OFI→return R²_out ≈ 0.3%, HAC(5) p<0.0001 | `results/OFI_STUDY.md` Step 2F | Same, plus: even if the data were clean, 0.3% R² at this N is statistically significant but economically negligible — not evidence of a tradeable signal |
 
 ## Retired numbers
@@ -79,19 +91,26 @@ per-op timed). To re-verify when a file is available:
 # then update the figure and its "pending re-verification" label in README.md and bench/BASELINE.md
 ```
 
-**All `data/features_*.csv` and `data/panel_*.csv` are stale and need regeneration** — same
-raw-ITCH-file blocker as above. `data/features_AAPL.csv` (mtime 2026-05-04) and
-`data/panel_AAPL.csv` (mtime 2026-06-13) have a corrupted reconstructed book (verified via
-`quoted_spread` — a large fraction of rows show `uint32_t`-underflowed spreads in the hundreds
-of thousands of dollars, across all 5 tickers checked). **The cause is now confirmed**: every
-CSV in `data/` predates this session's Task 2 (`stock_locate` filtering, commit `3253443`),
-which is the actual fix — not the earlier-claimed, since-retracted item-4 stock-field bug.
-Before Task 2, the parser delivered every `'D'`/`'U'`/`'E'`/`'C'`/`'X'` message for every
-ticker to whichever single book was open, unfiltered; confirmed by reproducing the exact
-corruption running the pre-fix binary against real Nasdaq BX data, and confirmed fixed by
-running today's code against the same file with zero corrupted rows (`results/OFI_STUDY.md`
-"Blocker 1"). Today's engine code is confirmed correct on both synthetic data and real BX
-venue data. Regeneration is unblocked — the cause is fixed — but has not been carried out yet.
+**Regenerated for one date (2019-12-30, main feed) — 4 of 5 study tickers promoted to `data/`,
+1 held back.** `data/features_{AAPL,AMZN,NFLX,WDAY}.csv` are now real, correct data: generated
+via `scripts/regenerate_data.sh` from a real Nasdaq main-feed file (downloaded from
+`emi.nasdaq.com`), passed `scripts/validate_book.py` (positive, non-crossed, sub-dollar-or-
+explained spreads), and promoted via `scripts/promote_data.sh`. `data/features_ETSY.csv` was
+**not** promoted — its single flagged row (spread=$200,000) was inspected directly and found to
+be a real pre-market stub quote (timestamp ~7:42 AM, near-zero bid + a deliberately-unfillable
+distant ask — a documented real market-microstructure pattern, not the old corruption
+signature), but held back pending a decision on whether to special-case pre-market rows in
+`validate_book.py` or accept/exclude it manually. `data/panel_*.csv` (the 7-day panels) are
+**still stale** — only one date has been regenerated so far, deliberately, per explicit
+instruction not to scale to the full panel yet.
+
+**Root cause of the original corruption is confirmed**: every previously-stale CSV in `data/`
+predated this session's Task 2 (`stock_locate` filtering, commit `3253443`), which is the
+actual fix — not the earlier-claimed, since-retracted item-4 stock-field bug. Before Task 2,
+the parser delivered every `'D'`/`'U'`/`'E'`/`'C'`/`'X'` message for every ticker to whichever
+single book was open, unfiltered; confirmed by reproducing the exact corruption running the
+pre-fix binary against real Nasdaq BX data, and confirmed fixed by running today's code against
+the same file with zero corrupted rows (`results/OFI_STUDY.md` "Blocker 1").
 
 **Regeneration is now a two-step, staging-gated pipeline (2026-07-24) — never a direct write
 to `data/` by default.** This exists because testing the regeneration script against a real
@@ -165,6 +184,12 @@ day) at a time, so rebuilding a `panel_*.csv` means running it once per day and 
   tickers sharing the same `order_ref` and proves cross-contamination no longer occurs. No
   regression in `bench/BASELINE.md` mean/p50 (unaffected code path — the microbenchmarks
   exercise `OrderBook`/`FeatureEngine` directly, never `itch_parser.cpp`).
+- **ETSY not promoted to `data/` for 2019-12-30 — pending a decision.** Its one flagged row
+  (spread=$200,000, timestamp ~7:42 AM) was inspected and found to be a real pre-market stub
+  quote (near-zero bid, deliberately-unfillable distant ask), not the corruption signature.
+  Open question: should `validate_book.py` special-case pre-market timestamps, should this
+  specific row be manually accepted, or should ETSY simply wait for a regeneration that starts
+  from regular-session data only? Not decided — held back rather than guessed at.
 - **VPIN / Lee-Ready work: explicitly not started**, per current instruction.
 
 ## Repo state
