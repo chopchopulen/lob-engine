@@ -51,27 +51,34 @@ The Makefile uses `-O2 -std=c++17` and auto-tracks header dependencies via `-MMD
 **Example:**
 
 ```bash
-./lob_engine data/01302020.NASDAQ_ITCH50 AAPL data/features_AAPL.csv
+./lob_engine data/raw/12302019.NASDAQ_ITCH50 AAPL data/features_AAPL.csv
 ```
 
-The engine will print a progress summary on exit:
+The engine will print a progress summary on exit — real output, measured 2026-07-25 against a
+real Nasdaq main-feed file (2019-12-30, 263.24M total messages, all instruments):
 
 ```
 Done.
-  Messages processed:  226000000
-  Trades:              1840312
-  Feature rows:        23400
-  Elapsed:             29.0s
-  Throughput:          7.8M msg/s
+  Messages processed:  1512179
+  Trades:              60543
+  Feature rows:        24729
+  Active orders left:  0
+  Elapsed:             13.5392s
+  Throughput:          0.111689M msg/s
 
 Features written to: data/features_AAPL.csv
 ```
 
-**Note:** the 226M messages / 7.8M msg/s / 29.0s figures above are pending re-verification —
-no raw ITCH file is currently available locally to rerun this end-to-end measurement. This is
-an aggregate wall-clock figure, unaffected by the per-op benchmark harness issue described
-below; it is simply unconfirmed on this machine since the last audit. See
-[`bench/BASELINE.md`](bench/BASELINE.md) for detail.
+"Messages processed" is AAPL's own filtered count (~0.57% of the file's 263.24M total) — every
+message type carries `stock_locate`, so filtering happens per-message, not via a separate pass.
+Elapsed time is dominated by sequentially scanning the full file for AAPL's messages, not by
+per-message book-update cost (see [`bench/BASELINE.md`](bench/BASELINE.md) for that: 8-15ns/op).
+An **older version of this README previously cited a 226M-messages/7.8M-msg/s/29.0s figure for
+this example — that figure was retired 2026-07-25 after a real file became available to test it.
+It does not correspond to any measurement this codebase can produce**: `OrderBook` reconstructs
+one instrument at a time (single- or dual-ticker mode), and no code path reconstructs order
+books for every instrument in a file simultaneously — see `bench/BASELINE.md`'s "End-to-end
+throughput" section for the full verdict and the two honestly-scoped replacement numbers.
 
 Then run the regression analysis:
 
@@ -91,8 +98,12 @@ Headline figure — `BM_FullPipeline` (the dominant message type, ~60% of ITCH t
 |---|---|
 | Mean per-message latency | 17.17 ns |
 | Median (p50) per-message latency | 16.93 ns |
-| Messages processed (end-to-end, pending re-verification) | 226M |
-| Throughput (end-to-end, pending re-verification) | 7.8M msg/s |
+| Whole-file parse throughput, unfiltered (real main-feed data, 2019-12-30) | 18.4-18.8M msg/s (263.24M messages) |
+
+The previous "226M messages / 7.8M msg/s / 29.0s end-to-end" row has been retired (2026-07-25)
+— it doesn't correspond to a measurement this codebase's single-instrument `OrderBook`
+architecture can produce. See [`bench/BASELINE.md`](bench/BASELINE.md)'s "End-to-end
+throughput" section for the full explanation and the real replacement numbers.
 
 The flat sorted-array book representation eliminates pointer-chasing and improves cache
 locality at the common case of 5–20 active price levels per side; see `bench/BASELINE.md`

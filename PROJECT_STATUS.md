@@ -52,6 +52,7 @@ that — positive, non-crossed, sub-dollar spreads — before any new data is tr
 | BM_FullPipeline p50: 16.93 ns | `bench/BASELINE.md` | Same as above |
 | Per-benchmark mean/p50 for all 8 benchmarks | `bench/BASELINE.md` Phase 3 table | cv ≤2.81% across 8 reps — stable, safe to cite single-sample |
 | Pool-allocator fix: -28% to -54% mean latency reduction (5 of 6 op-touching benchmarks) | `bench/BASELINE.md` Phase 4 | ExecuteOrder correctly shows ~0% (never touches `orders_` insert/erase) — not a partial fix |
+| Whole-file parse throughput: 18.4-18.8M msg/s, 263.24M messages, real main-feed data (2019-12-30) | `bench/BASELINE.md` "End-to-end throughput" | Parse-only (no book/feature reconstruction); replaces the retired 226M/7.8M end-to-end claim, not a like-for-like number — see caveat in source |
 
 **Contemporaneous OFI construction validation is now claimable — the first real research
 result this project has had:**
@@ -88,18 +89,11 @@ not been analyzed. Every predictive number below is retired pending that analysi
 | README `items_per_second` throughput-derived latency table | Derived from the tick-quantized old harness; not re-derived from new numbers because that would not be a measurement | (removed, not replaced — see `bench/BASELINE.md` for why no substitute is offered) |
 | OFI Iteration 1 within-day 70/30 split numbers (AAPL R²_out=-0.18%, AMZN R²_out=+0.07%) | Chronological split within a single day crosses the intraday U-shape regime boundary; 58% of the underlying data was extended-hours (pre/post-market), not disclosed in the original write-up. **Additionally and separately retired**: computed on data now known to be stale (see Unverified/Blocked section) | `results/OFI_STUDY.md` SUPERSEDED section |
 | This session's own 2026-07-24 OFI re-audit numbers (day-level split, walk-forward, HAC) | Also computed on the same stale `data/` CSVs — the methodology fix was real, the numbers inherited the same underlying data problem | `results/OFI_STUDY.md` "Blocker 1" section |
+| **226M messages / 7.8M msg/s / 29.0s end-to-end throughput** (`README.md`) | Tested for the first time 2026-07-25 against a real main-feed file (2019-12-30) and found unreproducible: the claim conflates whole-file scope with full per-instrument book reconstruction, and this codebase's `OrderBook` reconstructs one instrument at a time — no code path processes every instrument's messages through book reconstruction simultaneously, so "226M messages through the full pipeline" cannot correspond to any measurement of this code. Not corrected to a new single number; replaced with two separately-scoped real numbers (whole-file parse-only throughput, and single-ticker full-pipeline throughput) — see below | `bench/BASELINE.md` "End-to-end throughput" section (RETIRED verdict), `README.md` |
 
 ## Unverified / blocked
 
-**226M messages / 7.8M msg/s / 29.0s end-to-end throughput** (`README.md`) — blocked on a raw
-ITCH `.bin`/`.NASDAQ_ITCH50` file, not present locally (`data/` has only derived CSVs).
-Unaffected by the benchmark-harness fix (it's an aggregate wall-clock measurement, never
-per-op timed). To re-verify when a file is available:
-
-```bash
-./lob_engine <file.NASDAQ_ITCH50> <TICKER> <output.csv>
-# then update the figure and its "pending re-verification" label in README.md and bench/BASELINE.md
-```
+(empty — the only entry here, the 226M/7.8M end-to-end figure, was resolved 2026-07-25; see Retired numbers above)
 
 **Regenerated for all 7 available main-feed dates, all 5 study tickers — 35/35 combinations
 promoted, zero hard failures.** Dates: 2019-01-30, 03-27, 07-30, 08-30, 10-30, 12-30, and

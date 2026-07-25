@@ -247,15 +247,54 @@ benchmarks, including `BM_FullPipeline`. Only mean and p50 are currently defensi
 single-sample citable statistics; p99 and p999 require the same treatment — reported only as
 a multi-repetition range, or not cited at all, on this unpinned host.
 
-## End-to-end throughput (226M messages, 7.8M msg/s, 29.0s) — still unverified, unaffected by this harness work
+## End-to-end throughput (226M messages, 7.8M msg/s, 29.0s) — VERDICT: RETIRED, replaced below (2026-07-25)
 
-No raw ITCH `.bin`/`.NASDAQ_ITCH50` file exists locally. This figure is an **aggregate**
-end-to-end measurement (wall-clock over a full replay), not a per-op microbenchmark — it was
-never measured with `chrono::now()`-per-op timing in the first place, so it is not affected by
-the tick-quantization bug this harness rewrite fixes. It remains exactly as unverified as
-before this session. If a raw file becomes available, rerun via
-`./lob_engine <file> <TICKER> <output.csv>` and update this section — do not infer a new
-throughput number from the per-op deltas above without an actual end-to-end run.
+A raw main-feed file (2019-12-30, `data/raw/12302019.NASDAQ_ITCH50`, 8.25GB decompressed)
+became available this session, making this claim testable for the first time. Measured on an
+Apple M3 Pro (`arm64`, this repo's dev machine).
+
+**The claim as originally stated cannot be reproduced, and is retired, not corrected to a new
+single number — it conflates two different things this codebase's architecture cannot do in
+one measurement:**
+
+- "226M messages" implies whole-file scope (every message, every instrument).
+- "7.8M msg/s ... full pipeline" implies parsing AND book reconstruction AND feature
+  computation for all of them.
+- `OrderBook` is one instrument's book. `main.cpp` only ever instantiates one or two
+  `OrderBook` objects (single- or dual-ticker mode) — there is no code path, past or present,
+  that reconstructs order books for every instrument in a file simultaneously. Doing so would
+  require one book per `stock_locate` (thousands, for a main-feed file) — a fundamentally
+  different, much larger feature than anything in this repo. **No measurement of "226M
+  messages through full book reconstruction" is possible with this codebase**, so the original
+  claim cannot be verified, corrected, or attributed to a real run of this code as stated.
+
+**What was actually measured instead, as two separate, honestly-scoped numbers:**
+
+1. **Whole-file parse throughput, unfiltered, no book/feature reconstruction** (directly
+   comparable in methodology to the BX `bench_parser` figure below, now on real main-feed
+   data): `LOB_BENCH_ITCH_FILE=data/raw/12302019.NASDAQ_ITCH50 ./lob_bench
+   --benchmark_filter='BM_ParseFile' --benchmark_repetitions=1` →
+   **263.24M messages, 14.0–14.3s wall (2 runs), 18.4–18.8M msg/s.** Message count is stable
+   run-to-run (deterministic parse); wall time varies by ~2% across runs. This is the closest
+   honest analog to the original claim's "whole file, hundreds of millions of messages" shape —
+   and it is **2.4x faster** than the originally-claimed 7.8M msg/s, but it is parse-only, not
+   full pipeline, so it does not confirm the original number even loosely; it measures a
+   different thing that happens to be in the same ballpark of message count.
+2. **Single-ticker full pipeline** (parse + filter + `OrderBook` reconstruction +
+   `FeatureEngine` on AAPL, same file): `./lob_engine data/raw/12302019.NASDAQ_ITCH50 AAPL
+   /tmp/out.csv` → 1,512,179 messages matched the AAPL filter, 13.54s wall, "0.112M msg/s" by
+   `main.cpp`'s own printed metric (`msg_count / elapsed_s`). **This number is not comparable
+   to anything above or to the original claim** — the 13.54s is dominated by sequentially
+   scanning the full 8.25GB file byte-by-byte to find AAPL's ~0.57% of messages, not by
+   per-message book-update cost (which is already covered, correctly, by `BM_AddOrder`/
+   `BM_ExecuteOrder`/etc. above at 8-15ns/op). Reported for completeness, not as a throughput
+   claim.
+
+**Verdict: RETIRED.** Neither number above is "the" 226M/7.8M figure, corrected or otherwise —
+that combined figure doesn't correspond to a measurement this codebase's architecture can
+produce. Do not cite 226M/7.8M/29.0s going forward. The two numbers above are the closest real,
+reproducible substitutes, kept walled off from each other and from the BX `bench_parser` figure
+(different data, different scope, do not average or compare them as if validating one another).
 
 ## How to reproduce
 
