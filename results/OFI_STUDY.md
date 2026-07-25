@@ -465,6 +465,69 @@ confirming AAPL's R² does not move when a filter that changes nothing is applie
 remains prospective: a documented, uniform rule ready for dates/tickers in the eventual panel
 that are not this clean.
 
+## Multi-date panel assembled (2026-07-24) — NOT yet studied
+
+**7-date main-feed panel pulled, regenerated through the full locked pipeline, and assembled.
+No predictive regression, cross-date split, or research conclusion has been run on it — this
+section is provenance and characterization only, per explicit instruction to stop here for
+review before scaling further.**
+
+**Dates** (all downloaded from `emi.nasdaq.com`, main Nasdaq ITCH feed, verified by exact
+Content-Length match): 2019-01-30, 2019-03-27, 2019-07-30, 2019-08-30, 2019-10-30,
+2019-12-30, 2020-01-30. These are the only 7 main-feed dates confirmed downloadable from the
+public sample server (see `PROJECT_STATUS.md` inventory) — not a continuous run, periodic
+samples roughly 2 months apart.
+
+**Tickers**: AAPL, AMZN, ETSY, NFLX, WDAY (the original 5 study tickers).
+
+**Pipeline for every date/ticker**: download → gunzip → `regenerate_data.sh` (staging) →
+`validate_book.py` (raw `best_bid`/`best_ask`, quote-validity filter) → `promote_data.sh` →
+archived as `data/features_{TICKER}_{MMDDYYYY}.csv`. **All 35 date×ticker combinations (7
+dates × 5 tickers) passed validation with zero hard failures** — no ticker failed to resolve
+via `stock_locate` on any date, no crossed/invalid/absurd-spread quote was found in any
+regular-session row across the whole panel.
+
+**Per-date, per-ticker table** (regular-session row counts, median regular-session mid_price):
+
+| Date | AAPL rows / mid | AMZN rows / mid | ETSY rows / mid | NFLX rows / mid | WDAY rows / mid |
+|---|---|---|---|---|---|
+| 2019-01-30 | 22,112 / $162.81 | 20,196 / $1,651.58 | 13,180 / $53.80 | 18,622 / $333.85 | 11,339 / $169.88 |
+| 2019-03-27 | 22,332 / $188.53 | 20,920 / $1,762.83 | 11,855 / $66.02 | 20,686 / $353.27 | 11,576 / $189.50 |
+| 2019-07-30 | 21,364 / $208.24 | 18,556 / $1,898.22 | 9,574 / $68.56 | 17,939 / $325.32 | 11,733 / $208.68 |
+| 2019-08-30 | 21,839 / $207.79 | 18,815 / $1,772.21 | 9,119 / $52.74 | 17,627 / $292.41 | 15,198 / $176.57 |
+| 2019-10-30 | 21,147 / $242.59 | 18,136 / $1,770.86 | 13,036 / $52.91 | 19,511 / $291.08 | 12,761 / $162.65 |
+| 2019-12-30 | 21,949 / $291.33 | 19,695 / $1,848.80 | 9,944 / $44.70 | 16,937 / $326.20 | 11,907 / $164.03 |
+| 2020-01-30 | 22,450 / $321.19 | 19,668 / $1,859.86 | 12,258 / $49.91 | 18,235 / $343.40 | 13,994 / $186.91 |
+
+Row counts are broadly comparable across dates for every ticker (no half-day/holiday
+truncation signature — none of these dates are near-holiday early closes). Quote-validity
+filter dropped 0 rows on every date/ticker checked directly (12/30/2019, see "Real
+construction validation" above); not re-verified row-by-row for the other 6 dates but the
+same code path and validation gate applied uniformly.
+
+**Flags found — one, reported for review, not resolved:**
+
+- **AAPL price-scale flag**: median mid_price $321.19 (2020-01-30) vs $162.81 (2019-01-30) —
+  ratio 1.97, close to a 2:1 split ratio. However, the full 7-date trajectory
+  ($162.81 → $188.53 → $208.24 → $207.79 → $242.59 → $291.33 → $321.19) is a smooth, continuous
+  rise across every intervening date, not a discontinuous jump between two adjacent dates —
+  the adjacent-pair ratio (2020-01-30 vs 2019-12-30: $321.19/$291.33 = 1.10) shows nothing
+  split-like. AAPL's actual stock splits occurred in 2014 (7:1) and August 2020 (4:1) — neither
+  falls inside this Jan-2019–Jan-2020 window. Most likely explanation: organic 2019 price
+  appreciation (AAPL's well-documented ~2019 rally), not a split. **Not resolved as a
+  non-issue** — flagged per instruction for explicit sign-off before AAPL's cross-date data is
+  pooled as a single continuous, unadjusted price series.
+- No other flags: every other ticker (AMZN, ETSY, NFLX, WDAY) shows no ratio near 2/3/4/7
+  across any pair of dates; no ticker failed `stock_locate` resolution on any date; no
+  anomalous row-count pattern suggesting a half-day or data gap.
+
+**What has explicitly NOT been done**: no predictive regression, no day-level train/test
+split, no walk-forward, no HAC standard errors, no research conclusion of any kind on this
+panel. `data/panel_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv` exist (7 dates each, `date` column present,
+provenance-stamped) but are unanalyzed. The next step, when approved, is applying this
+session's day-level-split methodology (Steps 2C–2F above) to this real panel — the methodology
+itself doesn't need to change, only the input data does.
+
 ---
 
 ## SUPERSEDED — within-day 70/30 split (original methodology), do not cite for OOS claims

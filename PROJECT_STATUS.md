@@ -61,8 +61,18 @@ result this project has had:**
 | AAPL contemporaneous OFI→return R²=0.62 (2019-12-30, regular session) | `results/OFI_STUDY.md` "Real construction validation" | Single date, main-feed, verified-correct data (`scripts/validate_book.py` passed). Construction validation only — not a predictive/tradeable claim |
 | AMZN R²=0.33, ETSY R²=0.09, NFLX R²=0.29, WDAY R²=0.16 (same date) | Same | Clean liquidity gradient consistent with theory (ETSY = smallest-cap, lowest R²); same single-date caveat |
 
-**No predictive/multi-date OFI number is currently claimable** — one date can't support a
-cross-date split. Every predictive number below is retired pending the full panel:
+**7-date main-feed panel assembled (2026-07-24), NOT yet analyzed.**
+`data/panel_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv` now exist — 2019-01-30, 03-27, 07-30, 08-30, 10-30,
+12-30, 2020-01-30, all 35 date×ticker combinations passed validation with zero hard failures,
+provenance-stamped. One flag found and NOT resolved: AAPL's median price roughly doubles
+across the full window ($162.81→$321.19), most likely organic 2019 appreciation rather than a
+split (no adjacent-date jump, no split date falls in this window) — see
+`results/OFI_STUDY.md` "Multi-date panel assembled" for the full reasoning. **No predictive
+regression, cross-date split, or research conclusion has been run on this panel** — assembly
+and characterization only, per explicit instruction to stop for review before proceeding.
+
+**No predictive/multi-date OFI number is currently claimable** — the panel now exists but has
+not been analyzed. Every predictive number below is retired pending that analysis:
 
 | Number (provisional, do not cite) | Source | Why not claimable |
 |---|---|---|
@@ -91,18 +101,15 @@ per-op timed). To re-verify when a file is available:
 # then update the figure and its "pending re-verification" label in README.md and bench/BASELINE.md
 ```
 
-**Regenerated for one date (2019-12-30, main feed) — 4 of 5 study tickers promoted to `data/`,
-1 held back.** `data/features_{AAPL,AMZN,NFLX,WDAY}.csv` are now real, correct data: generated
-via `scripts/regenerate_data.sh` from a real Nasdaq main-feed file (downloaded from
-`emi.nasdaq.com`), passed `scripts/validate_book.py` (positive, non-crossed, sub-dollar-or-
-explained spreads), and promoted via `scripts/promote_data.sh`. `data/features_ETSY.csv` was
-**not** promoted — its single flagged row (spread=$200,000) was inspected directly and found to
-be a real pre-market stub quote (timestamp ~7:42 AM, near-zero bid + a deliberately-unfillable
-distant ask — a documented real market-microstructure pattern, not the old corruption
-signature), but held back pending a decision on whether to special-case pre-market rows in
-`validate_book.py` or accept/exclude it manually. `data/panel_*.csv` (the 7-day panels) are
-**still stale** — only one date has been regenerated so far, deliberately, per explicit
-instruction not to scale to the full panel yet.
+**Regenerated for all 7 available main-feed dates, all 5 study tickers — 35/35 combinations
+promoted, zero hard failures.** Dates: 2019-01-30, 03-27, 07-30, 08-30, 10-30, 12-30, and
+2020-01-30 (all confirmed-downloadable main-feed dates per the Task 1 inventory — not a
+continuous run). Each date/ticker went through the full locked pipeline
+(`regenerate_data.sh` → `validate_book.py` raw-quote validation → `promote_data.sh`) and was
+archived as `data/features_{TICKER}_{MMDDYYYY}.csv`. `data/panel_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv`
+are now assembled from all 7 dates with an explicit `date` column, provenance-stamped — no
+longer stale. One flag found (AAPL price-scale, see `results/OFI_STUDY.md` "Multi-date panel
+assembled"), not yet resolved. No predictive analysis has been run on this panel.
 
 **Root cause of the original corruption is confirmed**: every previously-stale CSV in `data/`
 predated this session's Task 2 (`stock_locate` filtering, commit `3253443`), which is the
