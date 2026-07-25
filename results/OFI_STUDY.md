@@ -505,21 +505,48 @@ filter dropped 0 rows on every date/ticker checked directly (12/30/2019, see "Re
 construction validation" above); not re-verified row-by-row for the other 6 dates but the
 same code path and validation gate applied uniformly.
 
-**Flags found — one, reported for review, not resolved:**
+**Flags — systematic check across all 5 tickers (2026-07-24), AAPL RESOLVED, no other ticker
+flagged:**
 
-- **AAPL price-scale flag**: median mid_price $321.19 (2020-01-30) vs $162.81 (2019-01-30) —
-  ratio 1.97, close to a 2:1 split ratio. However, the full 7-date trajectory
-  ($162.81 → $188.53 → $208.24 → $207.79 → $242.59 → $291.33 → $321.19) is a smooth, continuous
-  rise across every intervening date, not a discontinuous jump between two adjacent dates —
-  the adjacent-pair ratio (2020-01-30 vs 2019-12-30: $321.19/$291.33 = 1.10) shows nothing
-  split-like. AAPL's actual stock splits occurred in 2014 (7:1) and August 2020 (4:1) — neither
-  falls inside this Jan-2019–Jan-2020 window. Most likely explanation: organic 2019 price
-  appreciation (AAPL's well-documented ~2019 rally), not a split. **Not resolved as a
-  non-issue** — flagged per instruction for explicit sign-off before AAPL's cross-date data is
-  pooled as a single continuous, unadjusted price series.
-- No other flags: every other ticker (AMZN, ETSY, NFLX, WDAY) shows no ratio near 2/3/4/7
-  across any pair of dates; no ticker failed `stock_locate` resolution on any date; no
-  anomalous row-count pattern suggesting a half-day or data gap.
+Two checks run against every ticker's regular-session median mid_price per date, from the
+assembled `data/panel_{TICKER}.csv` files: (1) adjacent-sampled-date ratio outside [0.9, 1.1],
+(2) any pairwise ratio across the full 7-date window landing near 2, 3, 4, or 7 (the
+split-shaped signature).
+
+**Check (2) — the genuinely diagnostic one — flags AAPL only, nothing else:**
+
+| Ticker | Full-window near-2/3/4/7 flags |
+|---|---|
+| AAPL | **(2019-01-30, 2020-01-30, ratio 1.97, ≈2)** |
+| AMZN | none |
+| ETSY | none |
+| NFLX | none |
+| WDAY | none |
+
+**AAPL — RESOLVED, organic appreciation, not a split.** Full 7-date trajectory ($162.81 →
+$188.53 → $208.24 → $207.79 → $242.59 → $291.33 → $321.19) is a smooth, continuous rise across
+every intervening date, not a discontinuous jump between two adjacent dates — the adjacent-pair
+ratio (2020-01-30 vs 2019-12-30: $321.19/$291.33 = 1.10) shows nothing split-like. AAPL's
+actual stock splits occurred in 2014 (7:1) and August 2020 (4:1) — neither falls inside this
+Jan-2019–Jan-2020 window. AAPL rose ~79% in calendar 2019 (well-documented real rally) plus
+another ~10% into late Jan 2020 before the Feb–Mar 2020 COVID crash — both real, dated market
+moves, not a reconstruction or corporate-action artifact. **Conclusion: no back-adjustment
+needed for AAPL; its panel data is used as-is.**
+
+**Check (1) — the adjacent-date [0.9,1.1] band — fires often, but is miscalibrated for this
+panel and should not be read as a split signal.** It fired for AAPL, ETSY, and WDAY at several
+date pairs (e.g. ETSY 2019-01-30→2019-03-27: ratio 1.23; WDAY 2019-07-30→2019-08-30: ratio
+0.85). This check implicitly assumes "adjacent" means consecutive trading days, where a >10%
+move would be unusual. **Our "adjacent" dates are ~2 months apart** (this panel is 7 periodic
+samples, not a daily series — see Task 1 inventory) — a 10–23% move over 2 months is ordinary
+volatility, especially for smaller/growthier names like ETSY and WDAY, not a split signature.
+None of these adjacent-date flags coincide with a near-2/3/4/7 full-window ratio for their
+respective tickers, so none are split candidates. Noting the calibration mismatch explicitly
+rather than silently dropping the check or over-interpreting its output.
+
+**No ticker triggers a stop condition.** Every ticker's `stock_locate` resolved on every date
+(see the per-date processing logs); no anomalous row-count pattern suggesting a half-day or
+data gap was found in the original per-date review. Safe to build on this panel as-is.
 
 **What has explicitly NOT been done**: no predictive regression, no day-level train/test
 split, no walk-forward, no HAC standard errors, no research conclusion of any kind on this
