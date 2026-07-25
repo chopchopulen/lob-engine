@@ -31,6 +31,7 @@ struct ParserCallbacks {
     std::function<void(const ReplaceOrderMsg&)> on_replace;
     std::function<void(const ExecuteOrderMsg&)> on_execute;
     std::function<void(const CancelOrderMsg&)>  on_cancel;
+    std::function<void(const TradeMsg&)>        on_trade_hidden;  // 'P' — no ground truth, see TradeMsg
 };
 
 class ItchParser {

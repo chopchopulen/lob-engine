@@ -1,0 +1,42 @@
+{
+  "AAPL": {
+    "n_buckets": 49,
+    "bucket_size": 113563.52,
+    "n_vpin_windows": 0,
+    "vpin_gt": [],
+    "vpin_lr": [],
+    "vpin_bvc": []
+  },
+  "AMZN": {
+    "n_buckets": 49,
+    "bucket_size": 14341.56,
+    "n_vpin_windows": 0,
+    "vpin_gt": [],
+    "vpin_lr": [],
+    "vpin_bvc": []
+  },
+  "ETSY": {
+    "n_buckets": 48,
+    "bucket_size": 7286.66,
+    "n_vpin_windows": 0,
+    "vpin_gt": [],
+    "vpin_lr": [],
+    "vpin_bvc": []
+  },
+  "NFLX": {
+    "n_buckets": 49,
+    "bucket_size": 14545.9,
+    "n_vpin_windows": 0,
+    "vpin_gt": [],
+    "vpin_lr": [],
+    "vpin_bvc": []
+  },
+  "WDAY": {
+    "n_buckets": 49,
+    "bucket_size": 5707.78,
+    "n_vpin_windows": 0,
+    "vpin_gt": [],
+    "vpin_lr": [],
+    "vpin_bvc": []
+  }
+}

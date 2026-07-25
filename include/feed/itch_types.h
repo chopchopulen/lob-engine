@@ -84,13 +84,40 @@ struct ReplaceOrderMsg {
     uint32_t new_price;
 };
 
-// Parsed from 'E' message (31 bytes total)
-// Partial or full execution — some shares traded at this order's price
+// Parsed from 'E' (31 bytes) or 'C' (36 bytes) message.
+// 'E' has no price on the wire — it fills at the resting order's own book
+// price, so price/has_price/printable are left at their defaults (0/false/'Y').
+// 'C' (Order Executed With Price) fills away from the resting price; price
+// and has_price=true are set from the wire, and printable is read from the
+// spec's Printable field (offset 31, 'Y'/'N'). Per ITCH 5.0 spec section
+// 1.4.2: non-printable executions' shares are re-included in a later bulk
+// print (e.g. a cross) — callers must skip printable=='N' rows when summing
+// volume/time-and-sales, or shares get double-counted against that later print.
 struct ExecuteOrderMsg {
     uint16_t stock_locate;
     uint64_t timestamp_ns;
     uint64_t order_ref;
     uint32_t executed_shares;
+    uint32_t price      = 0;     // 1/10000 dollars; only set (has_price=true) for 'C'
+    bool     has_price  = false;
+    char     printable  = 'Y';   // 'C' only; 'E' has no such field, always printable
+};
+
+// Parsed from 'P' Trade Message (Non-Cross), 44 bytes total. Represents a
+// non-displayed (hidden) order execution. Per ITCH 5.0 spec section 1.5.1
+// and its revision history:
+//   - Order Reference Number (offset 11) has been zero-filled since
+//     2010-12-06 — no order-ID linkage back to a resting order is possible.
+//   - Buy/Sell Indicator (offset 19) has been hardcoded to 'B' regardless of
+//     the resting side since 2014-07-14 — the field carries no information.
+// Net effect: 'P' trades have ZERO recoverable ground truth by either
+// mechanism, confirmed against the spec (not assumed). They still count as
+// real executed volume — price/shares are meaningful — just unlabelable.
+struct TradeMsg {
+    uint16_t stock_locate;
+    uint64_t timestamp_ns;
+    uint32_t shares;
+    uint32_t price;   // 1/10000 dollars
 };
 
 // Parsed from 'X' message (23 bytes total)

@@ -164,6 +164,13 @@ public:
 
     BookSnapshot top_of_book(uint64_t ts) const;
 
+    // Read-only lookup by order_ref — no mutation, no allocation. Callers
+    // needing an order's side/price (e.g. ground-truth trade labeling) must
+    // call this BEFORE execute_order()/delete_order(), since a fully-filled
+    // or deleted order is erased and no longer found here afterward. Not on
+    // any benchmarked call path (see bench/BASELINE.md).
+    bool peek_order(uint64_t order_ref, Order& out) const;
+
     std::vector<std::pair<uint32_t, uint32_t>> bid_levels(int n) const;
     std::vector<std::pair<uint32_t, uint32_t>> ask_levels(int n) const;
 

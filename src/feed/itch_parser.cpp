@@ -216,15 +216,10 @@ size_t ItchParser::parse_file(const std::string& path,
         //  [11-18] = order_ref_num
         //  [19-22] = executed_shares
         //  [23-30] = match_number    (ignored — not needed downstream)
-        //  [31]    = printable       (ignored)
-        //  [32-35] = execution_price (ignored — book only tracks resting
-        //            price; this message type is for executions away from
-        //            the order's display price, but the share reduction +
-        //            trade count is what matters here)
-        // Functionally an execution (like 'E'): reduces/executes an order's
-        // shares. Reuses ExecuteOrderMsg + on_execute — OrderBook::execute_order
-        // only needs order_ref + executed_shares, and that path is already
-        // covered by test_execute_order in test_order_book.cpp.
+        //  [31]    = printable       ('Y'/'N' — see ExecuteOrderMsg comment)
+        //  [32-35] = execution_price (captured — this message type fills away
+        //            from the order's display price, so unlike 'E' the real
+        //            fill price can't be recovered from the resting order)
         else if (msg_type == 'C' && cb.on_execute) {
             if (msg_len < 36) continue;
             uint16_t locate = read_u16(msg + 1);
@@ -235,7 +230,37 @@ size_t ItchParser::parse_file(const std::string& path,
             m.timestamp_ns    = read_u48(msg + 5);
             m.order_ref       = read_u64(msg + 11);
             m.executed_shares = read_u32(msg + 19);
+            m.printable       = (char)msg[31];
+            m.price           = read_u32(msg + 32);
+            m.has_price       = true;
             cb.on_execute(m);
+            ++count;
+        }
+
+        // ── 'P' Trade Message (Non-Cross) ─────────────────────────────
+        //  [0]     = 'P'
+        //  [1-2]   = stock_locate
+        //  [5-10]  = timestamp
+        //  [11-18] = order_ref_num  (zero-filled since 2010-12-06 — unused)
+        //  [19]    = buy_sell_indicator (always 'B' since 2014-07-14 — unused)
+        //  [20-23] = shares
+        //  [24-31] = stock (8 bytes — unused, stock_locate is authoritative)
+        //  [32-35] = price
+        //  [36-43] = match_number (ignored)
+        // Non-displayed (hidden) order execution. See TradeMsg for why this
+        // carries no usable ground truth (both linkage fields are spec-
+        // mandated dead values) — it still counts as real executed volume.
+        else if (msg_type == 'P' && cb.on_trade_hidden) {
+            if (msg_len < 36) continue;
+            uint16_t locate = read_u16(msg + 1);
+            if (!passes_filter(locate, filter_locates)) continue;
+
+            TradeMsg m;
+            m.stock_locate = locate;
+            m.timestamp_ns = read_u48(msg + 5);
+            m.shares       = read_u32(msg + 20);
+            m.price        = read_u32(msg + 32);
+            cb.on_trade_hidden(m);
             ++count;
         }
 

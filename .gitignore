@@ -22,6 +22,10 @@ compile_commands.json
 # ITCH binary data files (too large for GitHub)
 data/
 
+# Per-execution trade extraction CSVs (derived, regenerable via vpin_extract,
+# same rationale as data/ above) -- summary CSVs/JSON in analytics/ are kept.
+analytics/trades/
+
 # Claude Code project settings
 .claude/
 

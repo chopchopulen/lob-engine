@@ -186,6 +186,13 @@ void OrderBook::cancel_order(uint64_t ts, uint64_t order_ref,
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
+bool OrderBook::peek_order(uint64_t order_ref, Order& out) const {
+    auto it = orders_.find(order_ref);
+    if (it == orders_.end()) return false;
+    out = it->second;
+    return true;
+}
+
 BookSnapshot OrderBook::top_of_book(uint64_t ts) const {
     BookSnapshot snap{};
     snap.timestamp_ns = ts;

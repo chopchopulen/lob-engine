@@ -49,3 +49,13 @@ add_executable(lob_test
     src/features/feature_engine.cpp
 )
 target_include_directories(lob_test PRIVATE include)
+
+# ── VPIN/Lee-Ready offline analytics extractor ────────────────────────────────
+# Separate binary, not on any benchmarked path. Reprocesses raw ITCH files to
+# extract per-execution ground-truth-labeled trades. See analytics/vpin_extract.cpp.
+add_executable(vpin_extract
+    analytics/vpin_extract.cpp
+    src/feed/itch_parser.cpp
+    src/book/order_book.cpp
+)
+target_include_directories(vpin_extract PRIVATE include)
