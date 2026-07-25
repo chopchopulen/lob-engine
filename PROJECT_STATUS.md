@@ -62,23 +62,35 @@ result this project has had:**
 | AAPL contemporaneous OFI→return R²=0.62 (2019-12-30, regular session) | `results/OFI_STUDY.md` "Real construction validation" | Single date, main-feed, verified-correct data (`scripts/validate_book.py` passed). Construction validation only — not a predictive/tradeable claim |
 | AMZN R²=0.33, ETSY R²=0.09, NFLX R²=0.29, WDAY R²=0.16 (same date) | Same | Clean liquidity gradient consistent with theory (ETSY = smallest-cap, lowest R²); same single-date caveat |
 
-**7-date main-feed panel assembled (2026-07-24), NOT yet analyzed.**
-`data/panel_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv` now exist — 2019-01-30, 03-27, 07-30, 08-30, 10-30,
-12-30, 2020-01-30, all 35 date×ticker combinations passed validation with zero hard failures,
-provenance-stamped. One flag found and NOT resolved: AAPL's median price roughly doubles
-across the full window ($162.81→$321.19), most likely organic 2019 appreciation rather than a
-split (no adjacent-date jump, no split date falls in this window) — see
-`results/OFI_STUDY.md` "Multi-date panel assembled" for the full reasoning. **No predictive
-regression, cross-date split, or research conclusion has been run on this panel** — assembly
-and characterization only, per explicit instruction to stop for review before proceeding.
+**7-date main-feed panel assembled (2026-07-24), analyzed (2026-07-25).**
+`data/panel_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv` — 2019-01-30, 03-27, 07-30, 08-30, 10-30, 12-30,
+2020-01-30, all 35 date×ticker combinations passed validation, provenance-stamped. AAPL's
+price-scale flag resolved as organic 2019 appreciation, not a split (see `results/OFI_STUDY.md`
+"Multi-date panel assembled").
 
-**No predictive/multi-date OFI number is currently claimable** — the panel now exists but has
-not been analyzed. Every predictive number below is retired pending that analysis:
+**Contemporaneous OFI, full 7-date panel — liquidity gradient confirmed, AAPL highest, ETSY
+lowest, consistent with the single-date table:**
+
+| Ticker | Contemporaneous R² (7-date pooled) |
+|---|---|
+| AAPL | 0.5579 |
+| AMZN | 0.3361 |
+| NFLX | 0.3003 |
+| WDAY | 0.2436 |
+| ETSY | 0.1899 |
+
+**Predictive OFI → 1s fwd return, cross-regime split (train = 4 earliest dates, test = 3
+latest, ~2 months apart — not walk-forward): near-zero out-of-sample R² for all 5 tickers,
+a legitimate finding, not a data-quality artifact.** R²_out ranges -0.0077 to +0.0069 across
+15 ticker×test-date cells (several negative); every coefficient is HAC(5)-significant
+(p<0.05, mostly p<0.0001) purely from sample size (N=35k-88k per ticker) — explicitly labeled
+economically negligible for all 5 tickers, not read as a tradeable signal. Full table:
+`results/OFI_STUDY.md` "OFI predictive study on the clean panel (2026-07-25)".
 
 | Number (provisional, do not cite) | Source | Why not claimable |
 |---|---|---|
-| AAPL predictive OFI→return R²_out ≈ 0 | `results/OFI_STUDY.md` Step 2F | Methodology (day-level split, HAC) is correct and reusable; computed on now-superseded stale data, not recomputed |
-| AMZN predictive OFI→return R²_out ≈ 0.3%, HAC(5) p<0.0001 | `results/OFI_STUDY.md` Step 2F | Same, plus: even if the data were clean, 0.3% R² at this N is statistically significant but economically negligible — not evidence of a tradeable signal |
+| AAPL predictive OFI→return R²_out ≈ 0 (Step 2F, day-level split) | `results/OFI_STUDY.md` Step 2F | Computed on since-found-stale data — superseded by the 2026-07-25 cross-regime study above, not recomputed under this methodology |
+| AMZN predictive OFI→return R²_out ≈ 0.3%, HAC(5) p<0.0001 (Step 2F) | `results/OFI_STUDY.md` Step 2F | Same — superseded; the 2026-07-25 clean-panel AMZN figure is R²_out≈0.6% pooled, still economically negligible |
 
 ## Retired numbers
 

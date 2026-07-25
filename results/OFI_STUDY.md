@@ -182,6 +182,18 @@ not two different phenomena requiring two different stories.
 **Conclusion: implementation validated via AAPL. Proceeding to the corrected split, per the
 instructed branch ("if high, the implementation is likely sound").**
 
+## SUPERSEDED (2026-07-25) — Step 2C through 2F below computed on since-found-stale data
+
+**Everything in Step 2C, 2D, 2E, and 2F was computed on the `data/panel_{TICKER}.csv` files
+that predate the stock_locate-filtering root-cause fix and the quote-validity work (see
+"Blocker 1" below and `PROJECT_STATUS.md` "Retired numbers") — the methodology (day-level
+split, HAC(5), walk-forward) is real and was reused as-is for the clean re-run, but every
+number under these four headings is void.** Kept below for the methodology write-up and for
+the historical record of what changed between the flawed and corrected runs — do not cite the
+R²/HAC figures in this block. The corrected numbers, on the verified-clean 7-date panel with a
+cross-regime (not walk-forward) split, are in "OFI predictive study on the clean panel
+(2026-07-25)" further down.
+
 ## Step 2C/2D — Day-level split + walk-forward, HAC(5) standard errors
 
 Regular-hours-only (09:30–16:00), 1-second predictive horizon, `data/panel_{TICKER}.csv`.
@@ -465,12 +477,7 @@ confirming AAPL's R² does not move when a filter that changes nothing is applie
 remains prospective: a documented, uniform rule ready for dates/tickers in the eventual panel
 that are not this clean.
 
-## Multi-date panel assembled (2026-07-24) — NOT yet studied
-
-**7-date main-feed panel pulled, regenerated through the full locked pipeline, and assembled.
-No predictive regression, cross-date split, or research conclusion has been run on it — this
-section is provenance and characterization only, per explicit instruction to stop here for
-review before scaling further.**
+## Multi-date panel assembled (2026-07-24)
 
 **Dates** (all downloaded from `emi.nasdaq.com`, main Nasdaq ITCH feed, verified by exact
 Content-Length match): 2019-01-30, 2019-03-27, 2019-07-30, 2019-08-30, 2019-10-30,
@@ -548,12 +555,75 @@ rather than silently dropping the check or over-interpreting its output.
 (see the per-date processing logs); no anomalous row-count pattern suggesting a half-day or
 data gap was found in the original per-date review. Safe to build on this panel as-is.
 
-**What has explicitly NOT been done**: no predictive regression, no day-level train/test
-split, no walk-forward, no HAC standard errors, no research conclusion of any kind on this
-panel. `data/panel_{AAPL,AMZN,ETSY,NFLX,WDAY}.csv` exist (7 dates each, `date` column present,
-provenance-stamped) but are unanalyzed. The next step, when approved, is applying this
-session's day-level-split methodology (Steps 2C–2F above) to this real panel — the methodology
-itself doesn't need to change, only the input data does.
+## OFI predictive study on the clean panel (2026-07-25)
+
+`scripts/ofi_panel_study.py`, run on all 7 dates × 5 tickers of the panel characterized above.
+Regular session only (09:30–16:00 ET), quote-validity filter applied (`bid>0 AND ask>0 AND
+ask>bid AND spread<=10% of mid`), returns computed within each date only (never bridging a
+session boundary).
+
+### Contemporaneous R² — construction check, full 7-date panel (not just one date)
+
+| Ticker | Contemporaneous R² | N (regular session, all 7 dates pooled) |
+|---|---|---|
+| AAPL | 0.5579 | 153,186 |
+| AMZN | 0.3361 | 135,979 |
+| NFLX | 0.3003 | 129,550 |
+| WDAY | 0.2436 | 88,501 |
+| ETSY | 0.1899 | 78,959 |
+
+**The liquidity gradient holds across the full panel, not just 2019-12-30.** AAPL remains
+highest (0.56, close to but below the single-date 0.62 — pooling 7 regimes naturally adds
+noise a single clean day doesn't have) and ETSY remains lowest (0.19). NFLX/WDAY swap order
+relative to the single-date table (NFLX 0.30 vs WDAY 0.24 here, vs WDAY 0.16 vs NFLX 0.29
+on 2019-12-30 alone) — a reminder that a single day's ranking among the middle three names is
+noisier than the AAPL-highest/ETSY-lowest anchors, which are robust across all 7 dates. This is
+a genuine confirmation of the OFI construction on real, clean, cross-regime data — not a
+restatement of the single-date table.
+
+### Predictive OFI → 1-second forward return, CROSS-REGIME split
+
+**Not walk-forward.** Train = the 4 earliest dates (2019-01-30, 2019-03-27, 2019-07-30,
+2019-08-30); test = the 3 latest (2019-10-30, 2019-12-30, 2020-01-30). These dates are ~2
+months apart with no daily contiguity, so this is out-of-sample across market regimes
+separated by real time gaps, not an expanding window over consecutive sessions — a walk-forward
+label would misdescribe what this split actually tests. HAC(5) standard errors, fit in-sample
+on the pooled 4 training dates per ticker (lag choice unchanged from Step 2C/2D's convention,
+restated in this script's own docstring for a standalone justification).
+
+| Ticker | N train | β (HAC) | HAC SE | p-value | R²_in | N test (pooled) | R²_out (pooled) | Significant (p<0.05) | Economically negligible |
+|---|---|---|---|---|---|---|---|---|---|
+| AAPL | 87,643 | 1.55e-9 | 3.42e-10 | 5.9e-06 | 0.0009 | 65,543 | 0.0014 | Yes | **Yes** |
+| AMZN | 78,483 | 1.87e-8 | 2.46e-9 | <0.0001 | 0.0032 | 57,496 | 0.0062 | Yes | **Yes** |
+| ETSY | 43,724 | 1.64e-8 | 5.06e-9 | 0.0012 | 0.0009 | 35,235 | 0.0017 | Yes | **Yes** |
+| NFLX | 74,870 | 1.54e-8 | 1.99e-9 | <0.0001 | 0.0029 | 54,680 | 0.0037 | Yes | **Yes** |
+| WDAY | 49,842 | 5.84e-8 | 7.38e-9 | <0.0001 | 0.0061 | 38,659 | **-0.0018** | Yes | **Yes** |
+
+**Per-test-date OOS R² (regime dependence, not averaged away):**
+
+| Ticker | 2019-10-30 | 2019-12-30 | 2020-01-30 |
+|---|---|---|---|
+| AAPL | 0.0014 | 0.0032 | 0.0001 |
+| AMZN | 0.0043 | 0.0065 | 0.0069 |
+| ETSY | 0.0031 | **-0.0029** | 0.0011 |
+| NFLX | 0.0044 | 0.0036 | 0.0028 |
+| WDAY | 0.0029 | 0.0002 | **-0.0077** |
+
+**Honest finding, stated as one, not searched around: near-zero out-of-sample predictive R²
+survives on clean, correctly-reconstructed, cross-regime data, for every one of the 5
+tickers.** Every coefficient is HAC-significant (p<0.05, several p<0.0001) — at N=44k-88k
+training observations, HAC significance on a nonzero slope is nearly free, and is explicitly
+**not** being read as evidence of a tradeable effect here. R²_out ranges from -0.0077 to
++0.0069 across all 15 ticker × test-date cells — every single one is economically negligible by
+the <1% threshold, and several (ETSY on 2019-12-30, WDAY pooled and on 2020-01-30) are
+*negative*, meaning the trained model performs worse than predicting the unconditional mean on
+that regime. This is not a construction failure (the contemporaneous check above confirms the
+OFI signal is real and well-formed) — it is a genuine statement about 1-second-ahead
+predictability of raw Level-1 OFI on this exchange, on this panel: it exists in the same
+interval (contemporaneous R² 0.19-0.56) but does not carry forward one second, on any of the 5
+names, across any of the 3 out-of-sample regimes tested. AMZN is the largest of the five
+out-of-sample effects (R²_out ≈ 0.6% pooled, positive in all 3 test regimes) but is still
+economically negligible by the same threshold applied uniformly to every ticker.
 
 ---
 
