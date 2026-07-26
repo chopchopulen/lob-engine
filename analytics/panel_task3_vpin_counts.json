@@ -1,0 +1,21 @@
+{
+  "canonical_1_50_N50": {
+    "AAPL": 0,
+    "AMZN": 0,
+    "ETSY": 0,
+    "NFLX": 0,
+    "WDAY": 0
+  },
+  "noncanonical_1_150_N20": {
+    "AAPL": 909,
+    "AMZN": 897,
+    "ETSY": 870,
+    "NFLX": 900,
+    "WDAY": 880
+  },
+  "overall_divergence": {
+    "n_buckets": 1712,
+    "bvc_mae": 0.19810230645173751,
+    "lr_mae": 0.03139813840357258
+  }
+}

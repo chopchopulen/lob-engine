@@ -1,166 +1,198 @@
-# VPIN / Lee-Ready Analytics — Results (single date, 2019-12-30)
+# VPIN / Lee-Ready Analytics — Results (full 7-date panel)
 
-Offline analytics layer (`analytics/vpin_extract.cpp`, `analytics/vpin_pipeline.py`).
-Does not touch the hot path, matching engine, or `bench/BASELINE.md` (verified: `BM_FullPipeline`
-p50 = 16.93ns after adding `OrderBook::peek_order` — null diff vs the recorded baseline, all
-14 `lob_test` cases still pass). Not fed into the vol-forecasting model.
+Offline analytics layer (`analytics/vpin_extract.cpp`, `analytics/vpin_pipeline.py`,
+`analytics/vpin_panel.py`). Does not touch the hot path, matching engine, or
+`bench/BASELINE.md` (verified: `BM_FullPipeline` p50 = 16.93ns after adding
+`OrderBook::peek_order` — null diff vs the recorded baseline, all 14 `lob_test` cases pass).
+Not fed into any vol-forecasting model.
 
-Scope: **one date, all 5 panel tickers.** This validates the ground-truth → Lee-Ready → VPIN
-pipeline mechanically end to end. It is explicitly **not** a predictive or toxicity result —
-see "Limits" below.
+**Scope**: all 7 panel dates (2019-01-30, 03-27, 07-30, 08-30, 10-30, 12-30, 2020-01-30) × all 5
+tickers (AAPL, AMZN, ETSY, NFLX, WDAY), regular session only. This supersedes the earlier
+single-date (2019-12-30) run — see "Superseded" at the bottom for what changed and why.
 
-## Task 1 — trade extraction, ground-truth coverage
+**The contribution of this layer is measurement and method comparison, not a trading signal.**
+Nothing below is a toxicity or predictive claim.
 
-| Ticker | Trades (E+C+P) | GT-labeled (E/C) | GT coverage |
-|---|---|---|---|
-| AAPL | 67,721 | 60,543 | 89.4% |
-| AMZN | 26,144 | 15,123 | 57.8% |
-| ETSY | 4,591 | 4,106 | 89.4% |
-| NFLX | 16,092 | 11,791 | 73.3% |
-| WDAY | 4,780 | 3,799 | 79.5% |
+## 1. Hidden-volume estimation, pooled across 7 dates (deterministic, novel)
 
-Ground truth = order-ID linkage (resting order's side, looked up before `execute_order()`
-mutates it). The uncovered fraction is entirely `'P'` (non-displayed/hidden) volume, which per
-the ITCH 5.0 spec (section 1.5.1 + revision history) has zero recoverable side information —
-Order Reference Number zeroed since 2010-12-06, Buy/Sell Indicator hardcoded to `'B'` since
-2014-07-14. This is a spec fact, not a gap in this extractor.
+| Ticker | Total vol | Hidden vol | Hidden % | Coverage % | Avg. median spread | Avg. median price |
+|---|---|---|---|---|---|---|
+| AMZN | 5,812,684 | 1,940,005 | **33.4%** | 66.6% | $0.37 | $1,796.17 |
+| WDAY | 4,582,817 | 1,230,032 | 26.8% | 73.2% | $0.08 | $179.94 |
+| NFLX | 9,617,104 | 2,421,115 | 25.2% | 74.8% | $0.08 | $324.14 |
+| ETSY | 4,202,736 | 697,625 | 16.6% | 83.4% | $0.02 | $55.50 |
+| AAPL | 41,584,617 | 6,337,144 | **15.2%** | 84.8% | $0.02 | $231.85 |
 
-## Task 1b — coverage is a hidden-volume estimate, not just a caveat
+"Hidden" = `'P'` (non-displayed) executed volume, which per the ITCH 5.0 spec has zero
+recoverable side information (order_ref zeroed since 2010-12-06, Buy/Sell Indicator hardcoded
+to `'B'` since 2014-07-14 — confirmed against the spec, not assumed). Coverage = ground-truth-
+labelable fraction of volume, deterministic from order-ID linkage.
 
-| Ticker | Total vol (reg. session) | Hidden vol | Hidden % | Median spread | Median price |
-|---|---|---|---|---|---|
-| AAPL | 5,678,176 | 651,294 | 11.5% | $0.02 | $290.78 |
-| AMZN | 717,078 | 312,932 | 43.6% | $0.43 | $1,851.00 |
-| ETSY | 364,333 | 44,575 | 12.2% | $0.01 | $44.67 |
-| NFLX | 727,295 | 218,438 | 30.0% | $0.07 | $325.99 |
-| WDAY | 285,389 | 73,965 | 25.9% | $0.07 | $163.93 |
+**Directional finding, not a robust statistic.** AMZN is both the highest-hidden-share and
+widest-average-spread/highest-priced name; AAPL is lowest on both. That anchors the direction
+(wider spread/higher price → more flow migrates to non-displayed order types) at the extremes.
+The rank order does **not** fully line up in the middle three (WDAY/NFLX/ETSY) between hidden%
+and spread/price — `n=5`, spread and price are collinear here, and this is one relationship
+measured two collinear ways, not two independent confirmations. Reporting the direction, not a
+precision-implying correlation coefficient.
 
-Hypothesis: hidden-volume share rises with price/spread. **Holds, on this single date:**
-Pearson r(hidden%, median spread) = **0.875**, r(hidden%, median price) = **0.820**. AMZN, the
-highest-priced/widest-spread name, has by far the highest hidden share (43.6%); AAPL and ETSY,
-the tightest/cheapest, have the lowest (~11-12%). Consistent with a simple mechanism: wider
-absolute spreads make displayed limit orders costlier to rest at the touch, pushing more flow
-to non-displayed order types. n=5 (one point per ticker, single date) — directionally
-suggestive, not a fitted/tested relationship; would need the full 7-date panel to say more.
-Reporting this as its own finding per instruction, not merely a VPIN-coverage caveat: **percent
-of executed volume that is unlabelable-by-construction is itself a measurable per-ticker
-market-structure statistic**, independent of anything downstream.
+## 2. Circularity finding — why Lee-Ready validation is largely tautological on lit trades
 
-## Task 2 — Lee-Ready vs ground truth
+Ground truth is *defined* by which side of the book an execution hit. `'E'` (Order Executed)
+fills at the resting order's own displayed price — the exact prevailing quote this pipeline
+reads from the same book state, with zero lag and zero possible price improvement in this
+reconstruction. Verified directly: **100.00% of `'E'` executions price exactly at the
+prevailing bid or ask, on every one of the 5 tickers.** Scoring the quote rule against ground
+truth on `'E'` therefore tests nothing — it's circular by construction, not a real test of the
+classifier. `'E'` is excluded from all Lee-Ready scoring below for this reason.
 
-Contemporaneous quote rule (trade price vs `(bid+ask)/2` at time of trade) + tick-rule fallback
-at the exact midpoint, zero-tick inherits the prior label. **No 5-second lag** — that lag in the
-original 1991 paper compensates for asynchronous trade/quote reporting on a consolidated tape;
-this is a single sequenced feed where book state is available with no lag, so the lag doesn't
-apply here.
+`'C'` (Order Executed With Price) genuinely diverges from the resting display price — it is the
+only lit-trade population where quote-rule classification is actually being tested against
+something it doesn't already know.
 
-| Ticker | n (lit) | Overall agree | 'E' agree | 'C' agree | quote-rule n | quote agree | tick n | tick agree | inherit n | inherit agree | at-midpoint |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| AAPL | 60,060 | 99.73% | 100.0% (n=59,754) | 46.7% (n=306) | 59,907 | 99.91% | 35 | 28.6% | 118 | 28.8% | 0.25% |
-| AMZN | 14,759 | 99.99% | 100.0% (n=14,734) | 92.0% (n=25) | 14,757 | 100.0% | 1 | 0.0% | 1 | 0.0% | 0.01% |
-| ETSY | 4,097 | 99.85% | 100.0% (n=4,080) | 64.7% (n=17) | 4,091 | 99.95% | 2 | 50.0% | 4 | 25.0% | 0.15% |
-| NFLX | 11,684 | 99.91% | 100.0% (n=11,621) | 84.1% (n=63) | 11,674 | 100.0% | 3 | 0.0% | 7 | 0.0% | 0.09% |
-| WDAY | 3,793 | 99.68% | 100.0% (n=3,765) | 57.1% (n=28) | 3,786 | 99.87% | 1 | 0.0% | 6 | 0.0% | 0.18% |
+### Lee-Ready vs ground truth, `'C'`-only, pooled across all 7 dates
 
-**Critical framing — do not read the overall/quote-rule numbers as "Lee-Ready is 99.9%
-accurate."** They are near-tautological, not a genuine classifier result:
+| Ticker | Pooled `'C'` n | Overall agree | quote-rule n | quote agree | tick-rule n | tick agree | at-midpoint n | at-midpoint % |
+|---|---|---|---|---|---|---|---|---|
+| AAPL | 3,372 | 40.3% | 1,945 | 53.3% | 1,427 | 22.6% | 1,427 | **42.3%** |
+| AMZN | 353 | 86.4% | 307 | 98.7% | 46 | 4.3% | 46 | 13.0% |
+| ETSY | 247 | 45.3% | 165 | 58.8% | 82 | 18.3% | 82 | 33.2% |
+| NFLX | 801 | 73.7% | 653 | 87.4% | 148 | 12.8% | 148 | 18.5% |
+| WDAY | 544 | 67.8% | 421 | 84.1% | 123 | 12.2% | 123 | 22.6% |
 
-- `'E'` (Order Executed) fills at the resting order's own displayed price. That price is *by
-  construction* exactly the prevailing best bid or best ask this pipeline just read off the same
-  book state, before the fill mutated it. There is no lag and no price improvement possible in
-  this reconstruction, so the quote rule mechanically recovers ground truth for every single
-  `'E'` trade (verified: 100.00% of `'E'` executions price exactly at the prevailing bid or ask,
-  all 5 tickers). This is checked, not assumed — see the sanity check the request asked for:
-  a suspiciously round/near-perfect number *is* a bug-shaped result, and this is what it turned
-  out to be — a structural artifact of the comparison, not a scoring bug.
-- `'C'` (Order Executed With Price) genuinely diverges from the resting display price — this is
-  the *only* subset where quote-rule classification is actually being tested against something
-  it doesn't already know. `'C'` volume is a small fraction of trades (0.04%-1.3% of executions
-  across tickers) but its accuracy is structured and realistic: 46.7% (AAPL) to 92.0% (AMZN),
-  landing in/near the range the literature actually reports for real quote-rule classification
-  (roughly 70-90% is typical; several of these are lower, likely because `n` is small — 17 to
-  306 trades — and 'C' executions specifically occur away from the touch, which is exactly the
-  harder case for a quote-rule classifier by construction).
-- Tick-rule fallback and midpoint-inherit cases are rare (≤0.25% of lit trades per ticker) and
-  their accuracy (0-50%) is close to a coin flip on tiny samples (n=1 to 118) — not a reliable
-  estimate either way, just flagged for completeness.
-- Spread-quartile accuracy (computed on the full lit set) is ~99-100% in every quartile for
-  every ticker — flat across conditions. Per the request's own sanity rule ("if errors are FLAT
-  across conditions, suspect the scoring, not the classifier"): correct diagnosis, and the cause
-  is the same `'E'`-tautology above, since `'E'` dominates every quartile bucket. A
-  quartile breakdown restricted to `'C'`-only trades would be the honest version of this cut, but
-  per-ticker `'C'` counts (17-306) are too small to slice into quartiles reliably on one date.
+All 5 pooled `'C'` counts clear the ~100-trade reliability floor — every number above is
+reportable, not a "sample too small" case.
 
-**Bottom line for Task 2**: the real, defensible finding is the `'C'`-only accuracy (46.7%-92.0%,
-ticker-dependent, small-n), not the 99.9% headline. And that gap matters directly for what
-Lee-Ready is actually *for* here: its job is classifying trades with **no** ground truth
-available (i.e. `'P'` hidden trades), which structurally resemble `'C'` far more than `'E'`
-(price not fixed to a known resting level) — so the accuracy that would transfer to the regime
-Lee-Ready is actually needed for is closer to the `'C'`-only numbers than the 99.9% aggregate.
-This gap is largest for AMZN, which also has the largest hidden-volume share (43.6%, Task 1b) —
-the ticker where Lee-Ready matters most is also the one with the fewest `'C'` trades (n=25) to
-validate against, so confidence in AMZN's hidden-trade classification is the weakest of the five.
+**AAPL is the standout, and not in the direction naive intuition would predict.** It's the most
+liquid, tightest-spread name in the panel, yet its `'C'`-trade Lee-Ready accuracy (40.3%) is the
+*worst* of the five — below a coin flip. The reason is visible in the same table: 42.3% of
+AAPL's `'C'` trades land exactly at the midpoint, more than 2x any other ticker (13-33%
+elsewhere). At the midpoint the quote rule can't disambiguate and falls back to the tick
+rule/inheritance, which itself only agrees with ground truth 22.6% of the time for AAPL's
+`'C'` trades. Tight, heavily-traded names generating a disproportionate share of exact-midpoint
+price-improved prints is a plausible, real market-microstructure effect (sub-penny/midpoint
+crossing execution is common in the most liquid names) — this is a genuine finding about
+where Lee-Ready struggles, not a scoring artifact (the same near-tautology check that flagged
+the `'E'`-circularity issue was re-run here and found nothing analogous for `'C'`).
 
-## Task 3 — VPIN, three variants (plumbing check only)
+**Core takeaway for Task 2, stated as instructed**: on a direct sequenced feed, the quote rule
+is redundant with the book for lit trades that fill at the touch (`'E'`), genuinely testable
+only on the price-improved `'C'` sliver, and completely untestable on the hidden `'P'` flow
+where a classifier is actually needed in the absence of book access. `'C'`-only accuracy
+(40-86%, ticker-dependent) is the honest number; it is not a stand-in for how well Lee-Ready
+would do on `'P'`, only the closest proxy this dataset can produce.
 
-Bucket size = that ticker's regular-session executed volume ÷ 50; buckets close at cumulative
-volume; trailing partial bucket discarded (never carried past session end — there is only one
-session per file). VPIN = rolling mean of `|buy-sell|/volume` over the last 50 closed buckets,
-computed 3 ways off the same bucket boundaries: ground truth, Lee-Ready, and BVC (bucket price
-change standardized and passed through the normal CDF).
+## 3. BVC vs ground truth — the novel per-bucket classification-divergence result
 
-| Ticker | Buckets closed | Bucket size (shares) | Complete 50-bucket VPIN windows |
-|---|---|---|---|
-| AAPL | 49 | ≈113,564 | 0 |
-| AMZN | 49 | ≈14,342 | 0 |
-| ETSY | 48 | ≈7,287 | 0 |
-| NFLX | 49 | ≈14,546 | 0 |
-| WDAY | 49 | ≈5,708 | 0 |
+**This is the primary contribution of this layer.** Standard VPIN literature has no way to
+validate BVC against a true trade-level classification — it only ever compares BVC to Lee-Ready,
+or to itself under resampling. Order-ID linkage in this codebase makes an actual ground-truth
+comparison possible for the first time here.
 
-**Zero complete VPIN observations on any ticker, as anticipated in the approved plan**: 1/50th-
-ADV bucket sizing needs a full day's volume just to close ~50 buckets, and a rolling 50-bucket
-window needs 50 *closed* buckets before it can emit a single VPIN value — one date closes 48-49
-buckets, one short. This is not a bug; it's the direct, predicted consequence of pairing
-per-session bucket sizing with an N=50 window on single-day data (Part B.3 of the approved
-plan). **This run's purpose was to validate the three-way bucketing/VPIN plumbing mechanically
-— it does that (buckets close correctly, all 3 buy/sell splits compute without error) — not to
-produce a VPIN reading.** A real VPIN comparison needs the 7-date panel, which will supply
-enough cumulative closed buckets (or, alternatively, a smaller `N` / smaller bucket size — an
-open parameter choice, not decided here) to produce actual observations.
+Per volume bucket (reset within each ticker-date, canonical 1/50-ADV sizing, tail bucket
+discarded — never carried across a session boundary), buy fraction computed 3 ways: ground
+truth (over labelable volume only — `'P'` excluded from both numerator and denominator, since
+GT cannot see it), Lee-Ready (over all bucket volume, including `'P'`), and BVC (over all bucket
+volume, standardized price change through the normal CDF).
 
-## Task 4 — honest scope statement
+| Ticker | Buckets | BVC MAE (buy-fraction) | Lee-Ready MAE | Avg. GT-labelable fraction of bucket |
+|---|---|---|---|---|
+| AAPL | 343 | 0.207 | 0.017 | 0.842 |
+| AMZN | 343 | 0.180 | 0.036 | 0.668 |
+| ETSY | 340 | 0.201 | 0.030 | 0.849 |
+| NFLX | 343 | 0.191 | 0.030 | 0.742 |
+| WDAY | 343 | 0.211 | 0.043 | 0.748 |
+| **Pooled (1,712 buckets)** | | **0.198** | **0.031** | |
 
-1. **The real contribution is the three-way comparison (ground truth vs Lee-Ready vs BVC), not
-   the VPIN numbers themselves.** Standard literature has no way to compute a genuine
-   ground-truth trade classification — it always validates Lee-Ready/BVC against *each other*
-   or against sparse, indirect proxies. This codebase's live book reconstruction can compute
-   exact ground truth for lit (`'E'`/`'C'`) trades via order-ID linkage, which is what makes
-   Task 2's `'C'`-only accuracy numbers meaningful in a way the aggregate can't be.
-2. **Coverage-as-hidden-volume (Task 1b) is a standalone finding**, not just a VPIN caveat: the
-   fraction of volume that's unlabelable by construction (`'P'` trades) correlates with spread
-   and price across these 5 tickers (r=0.88, r=0.82) on this one date.
-3. **A single date is a plumbing check, not a result.** Zero complete VPIN windows on any
-   ticker (Task 3) is the direct, expected consequence — not a finding about toxicity, volatility,
-   or anything predictive. Any claim beyond "the mechanism works" requires the 7-date panel.
-4. **Andersen-Bondarenko critique, stated plainly, not glossed over**: VPIN has been shown to be
-   substantially a volume/volatility proxy — order-flow imbalance measures correlate heavily with
-   realized volatility by construction (volume buckets are wider in absolute time during volatile
-   periods), and VPIN's out-of-sample predictive power for toxicity/flash-event risk weakens
-   considerably once that's controlled for. Nothing in this report is a toxicity or predictive
-   claim — this measures properties of three classification/aggregation methods against each
-   other and against a rare ground-truth baseline, it does not endorse VPIN as a trading or
-   risk signal.
+**BVC's per-bucket buy-fraction error (MAE ≈ 0.20, on a [0,1]-bounded quantity) is roughly 6x
+larger than Lee-Ready's (MAE ≈ 0.03), pooled across the full panel.** This is the headline
+number: BVC, which never sees trade-level information at all, is a materially worse estimator
+of the true within-bucket buy/sell split than Lee-Ready, which at least sees trade prices and
+quotes. Some of Lee-Ready's apparent accuracy here is inherited from bucket composition, not
+classifier skill — most bucket volume is `'E'` trades, which Lee-Ready classifies correctly by
+the same circularity noted in Section 2, so a bucket's aggregate LR buy-fraction tracks ground
+truth well partly *because* most of its volume was never a real test to begin with. This does
+not erase the BVC-vs-LR gap — BVC has access to the same bucket composition and still errs far
+more — but it does mean Lee-Ready's bucket-level number should not be read as "Lee-Ready solves
+classification," only as "Lee-Ready inherits enough tautologically-correct volume per bucket to
+outperform a method with even less information."
+
+**Divergence conditions**: Lee-Ready's error correlates with a bucket's hidden-volume fraction
+across every ticker (r = 0.25 to 0.57) — it errs more as more of the bucket's volume is
+inherently unlabelable, a sensible and honest relationship. **BVC shows no comparable pattern**
+(r = -0.05 to +0.12, near-zero and inconsistent in sign) — it is not that BVC degrades
+specifically where hidden volume is high, it is uniformly poor regardless of bucket
+composition, which is itself informative about what's driving its error (likely dominated by
+the standardization/CDF-mapping step rather than the labeling problem hidden volume represents).
+
+### Secondary, non-canonical: an actual VPIN series, explicitly flagged as a deviation
+
+Canonical 1/50-ADV bucket sizing with an N=50 rolling window yields **zero** complete VPIN
+observations for every ticker, even pooling all 7 dates — expected, since buckets reset per
+session and no single date closes 50 buckets on its own (each date closes ~48-49 at 1/50-ADV).
+
+Re-parameterized to 1/150-ADV buckets, N=20 window (**explicitly non-canonical — this is a
+data-driven deviation from the standard 1/50-ADV, N=50 specification, not a replacement for
+it**), complete VPIN observations become available: AAPL 909, AMZN 897, ETSY 870, NFLX 900,
+WDAY 880 (pooled across 7 dates). This is enough to plot a real distribution per ticker, but it
+is a different, smaller-bucket/shorter-window VPIN than what's reported in the literature under
+that name — any comparison to published VPIN levels must account for the different
+parameterization. Not further analyzed here (no toxicity/predictive claim made on these
+values) — reported only to show the mechanism can produce a genuine series once bucket sizing
+is adapted to a 7-non-contiguous-date sample, and to make explicit exactly how it deviates from
+canonical.
+
+## 4. Honest scope statement
+
+1. **Sections 1 and 3 are the real, defensible contributions**: hidden-volume estimation is
+   deterministic and something standard tape-only analysis cannot produce at all (it requires
+   book reconstruction with order-ID linkage); the BVC-vs-ground-truth divergence result answers
+   a question the standard literature structurally cannot ask, since it has no access to a true
+   trade-level classification to compare against.
+2. **Section 2's circularity finding is itself a result**, not just a caveat: on a direct
+   sequenced feed (as opposed to a consolidated tape), Lee-Ready's quote rule is tautological for
+   touch-filling executions and only genuinely testable on the price-improved `'C'` slice —
+   an architectural fact about this class of data, not specific to this implementation.
+3. **7 non-contiguous dates, ~2 months apart, is far too thin for any predictive or toxicity
+   claim.** Nothing in this report should be read as evidence that VPIN (in any of its 3
+   variants here) predicts anything. A spike-vs-volatility look would be a sanity check at best,
+   not a result, and was not performed for that reason.
+4. **Andersen–Bondarenko critique, stated plainly**: VPIN has been shown to be substantially a
+   volume/volatility proxy — order-flow-imbalance measures correlate with realized volatility
+   largely mechanically (volume buckets close faster in absolute time during volatile periods),
+   and VPIN's out-of-sample predictive power for toxicity/flash-event risk weakens considerably
+   once that's controlled for. Nothing here contradicts or tests that critique directly; it is
+   noted because this report's classification-divergence results measure *properties* of BVC/
+   Lee-Ready/ground-truth as estimators, and should not be mistaken for evidence that any of the
+   three, once computed, is a useful forward-looking signal.
+
+## Superseded — single-date (2019-12-30) run (2026-07-25)
+
+The original version of this report covered only 2019-12-30 as a plumbing check (confirmed the
+extraction → Lee-Ready → bucketing pipeline worked end to end, zero complete canonical VPIN
+windows as expected from one date's ~48 buckets). All of its numbers are subsumed by the 7-date
+results above, which pool a superset of that date's data plus 6 more regimes, and additionally
+correct the framing from "VPIN time series" to "per-bucket classification divergence" per
+instruction. Not retracted for being wrong — the single-date run's own conclusions (structural
+`'E'`-tautology, zero canonical VPIN windows) held up unchanged under the full panel; it is
+superseded only because the 7-date numbers are strictly more informative and are what should be
+cited going forward.
 
 ## Reproduction
 
 ```
 cmake -DCMAKE_BUILD_TYPE=Release -B build
 cmake --build build -j
-./build/vpin_extract data/raw/12302019.NASDAQ_ITCH50 <TICKER> analytics/trades/trades_<TICKER>_12302019.csv
-python3 analytics/vpin_pipeline.py
+for DATE in 01302019 03272019 07302019 08302019 10302019 12302019 01302020; do
+  for TICKER in AAPL AMZN ETSY NFLX WDAY; do
+    ./build/vpin_extract data/raw/${DATE}.NASDAQ_ITCH50 ${TICKER} analytics/trades/trades_${TICKER}_${DATE}.csv
+  done
+done
+python3 analytics/vpin_panel.py
 ```
 
-Raw ITCH file for 2019-12-30 (8.25GB decompressed) re-downloaded for this run via chunked
-range requests (`data/raw/` is gitignored — not checked in). Intermediate outputs:
-`analytics/task1b_coverage.csv`, `analytics/task2_lee_ready_summary.csv`,
-`analytics/task3_vpin_results.json`, `analytics/trades/trades_<TICKER>_12302019.csv`.
+Raw ITCH files (8-13GB decompressed each) are not checked in (`data/` and `analytics/trades/`
+are both gitignored — same rationale as the rest of this repo's raw/derived data). Persisted
+summary outputs: `analytics/panel_task1_hidden_volume.csv`,
+`analytics/panel_task2_lee_ready_C_only.csv`, `analytics/panel_task3_divergence.csv`,
+`analytics/panel_task3_divergence_conditions.csv`, `analytics/panel_task3_vpin_counts.json`.
