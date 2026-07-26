@@ -121,15 +121,14 @@ int main(int argc, char* argv[]) {
         auto t1 = std::chrono::steady_clock::now();
         double elapsed_s = std::chrono::duration<double>(t1 - t0).count();
 
-        // "Messages processed" is the count matched to this ticker's
-        // stock_locate, not the file's total message count -- every run
-        // scans the whole file twice (once for stock-directory resolution,
-        // once for the filtered parse) regardless of how few messages match,
-        // so "matched messages / elapsed_s" is NOT a meaningful throughput
-        // figure (it conflates a filtered numerator with a full-file-scan
-        // denominator). Reporting file size / elapsed_s (MB/s) instead, which
-        // is unambiguous regardless of filter selectivity. See
-        // bench/BASELINE.md "Real end-to-end panel-regeneration measurement"
+        // "Messages matched" is the count matched to this ticker's
+        // stock_locate, not the file's total message count -- the main parse
+        // pass always scans the whole file regardless of how few messages
+        // match, so "matched messages / elapsed_s" is NOT a meaningful
+        // throughput figure (it conflates a filtered numerator with a
+        // full-file-scan denominator). Reporting file size / elapsed_s
+        // (MB/s) instead, which is unambiguous regardless of filter
+        // selectivity. See bench/BASELINE.md "Real end-to-end measurement"
         // for the properly-paired total-messages-scanned/time figure.
         double file_mb = std::filesystem::file_size(itch_file) / 1e6;
         std::cout << "Done.\n"
@@ -141,7 +140,7 @@ int main(int argc, char* argv[]) {
                   << elapsed_s << "s\n"
                   << "  File size:           " << file_mb << " MB\n"
                   << "  Effective I/O rate:  " << (file_mb / elapsed_s) << " MB/s "
-                  << "(file is scanned twice per run; see note above)\n\n"
+                  << "(main parse scans the whole file once; locate resolution early-exits, see ItchParser::parse_stock_directory)\n\n"
                   << "Features written to: " << output_csv << "\n";
         return 0;
     }
@@ -329,7 +328,7 @@ int main(int argc, char* argv[]) {
               << elapsed_s << "s\n"
               << "  File size:          " << file_mb << " MB\n"
               << "  Effective I/O rate: " << (file_mb / elapsed_s) << " MB/s "
-              << "(file is scanned twice per run; see note above)\n\n"
+              << "(main parse scans the whole file once; locate resolution early-exits, see ItchParser::parse_stock_directory)\n\n"
               << "Combined CSV written to: " << output_csv << "\n";
     return 0;
 }

@@ -285,6 +285,16 @@ static std::vector<uint8_t> replace_order(uint16_t locate, uint64_t ts,
     return b;
 }
 
+static std::vector<uint8_t> system_event(char event_code) {
+    std::vector<uint8_t> b;
+    b.push_back('S');
+    put_u16(b, 0);   // stock_locate (unused for this message type, always 0)
+    put_u16(b, 0);   // tracking_number
+    put_u48(b, 0);   // timestamp
+    b.push_back((uint8_t)event_code);
+    return b;   // 12 bytes total, matches the real wire layout exactly
+}
+
 static void write_file(const std::string& path, const std::vector<std::vector<uint8_t>>& msgs) {
     std::vector<uint8_t> file;
     for (const auto& m : msgs) write_msg(file, m);
@@ -338,6 +348,62 @@ static void test_locate_filter_excludes_other_symbol() {
 
     remove(path.c_str());
     std::cout << "PASS test_locate_filter_excludes_other_symbol\n";
+}
+
+// ── test_stock_directory_early_exit ──────────────────────────────────────────
+// parse_stock_directory() stops scanning at the first System Event other than
+// 'O' (see itch_parser.cpp) instead of reading the whole file. Confirms it
+// actually stops -- not just that it doesn't crash -- by placing a Stock
+// Directory message AFTER that marker and checking it is NOT picked up.
+static void test_stock_directory_early_exit() {
+    using namespace itch_test;
+    const std::string path = "/tmp/lob_test_directory_early_exit.bin";
+    write_file(path, {
+        system_event('O'),          // start of messages
+        stock_directory(1, "AAAA"),
+        stock_directory(2, "BBBB"),
+        system_event('S'),          // start of system hours -- pre-session ends here
+        stock_directory(3, "CCCC"), // arrives after the marker -- must be skipped
+    });
+
+    auto locates = ItchParser::parse_stock_directory(path);
+    assert(locates.size() == 2);
+    assert(locates.at(1) == "AAAA");
+    assert(locates.at(2) == "BBBB");
+    assert(locates.find(3) == locates.end());
+
+    remove(path.c_str());
+    std::cout << "PASS test_stock_directory_early_exit\n";
+}
+
+// ── test_late_stock_directory_hard_errors ────────────────────────────────────
+// If a 'R' message ever appears after parse_stock_directory()'s early-exit
+// point (a spec violation the early-exit assumes cannot happen), parse_file()
+// must fail loudly rather than silently proceed with a possibly-incomplete
+// locate map that could mis-book a later message.
+static void test_late_stock_directory_hard_errors() {
+    using namespace itch_test;
+    const std::string path = "/tmp/lob_test_late_r.bin";
+    write_file(path, {
+        system_event('O'),
+        stock_directory(1, "AAAA"),
+        system_event('S'),
+        stock_directory(2, "BBBB"),   // late 'R' -- violates the ordering guarantee
+        add_order(1, 100, 1, 'B', 100, "AAAA", 10000),
+    });
+
+    ParserCallbacks cb;
+    cb.on_add = [](const AddOrderMsg&) {};
+    bool threw = false;
+    try {
+        ItchParser::parse_file(path, cb, {1});
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    assert(threw);
+
+    remove(path.c_str());
+    std::cout << "PASS test_late_stock_directory_hard_errors\n";
 }
 
 // ── test_replace_and_cross_ticker_order_ref_collision ────────────────────────
@@ -483,8 +549,10 @@ int main() {
     test_cancel_order();
     test_stock_locate_resolution();
     test_locate_filter_excludes_other_symbol();
+    test_stock_directory_early_exit();
+    test_late_stock_directory_hard_errors();
     test_replace_and_cross_ticker_order_ref_collision();
     test_golden_fixture_pipeline();
-    std::cout << "\nAll 14 tests passed.\n";
+    std::cout << "\nAll 16 tests passed.\n";
     return 0;
 }

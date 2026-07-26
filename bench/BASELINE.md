@@ -391,21 +391,58 @@ claim was traced to always-broken zero-filtering code at the initial commit (see
 doesn't correspond to any measurement this architecture can produce; this measures the real,
 current, single-ticker-filtered full-pipeline throughput, properly paired.
 
-### Is the double full-file scan necessary? Measured, not yet fixed
+### Locate-scan early-exit — implemented (2026-07-25)
 
-`parse_stock_directory()` scans the entire 8.25GB file looking for `'R'` (Stock Directory)
-messages, which per the ITCH 5.0 spec arrive once per instrument at session start. Checked
-directly against this file: **all 8,906 `'R'` messages fall within the first 365,464 bytes —
-0.0044% of the 8,251,407,909-byte file.** There is no `'R'` message anywhere in the remaining
-99.9956% of the file. An early-exit (stop `parse_stock_directory()`'s scan once messages stop
-being `'R'`-type for some margin past the last one seen, or simply once N consecutive non-`'R'`
-messages have been read) would eliminate essentially all of that scan's I/O and CPU cost —
-roughly halving total per-run wall time (locate resolution currently costs about as much as the
-entire filtered parse, per the pass-1/pass-2 split above), a ~19.0-19.7M msg/s single-pass
-figure would then apply to the *whole* run instead of needing a doubled-scan denominator, and
-`bench/BASELINE.md`'s corrected 19.29-19.68M full-run figures above would roughly double again.
-**Not implemented here — this is a measurement and a proposal only, per instruction.** If
-implemented, re-measure end-to-end before/after and update this section.
+`parse_stock_directory()` previously scanned the entire file looking for `'R'` (Stock Directory)
+messages. Checked directly against this file: all 8,906 `'R'` messages fall within the first
+365,464 bytes (0.0044% of the 8,251,407,909-byte file) — none appear anywhere in the remaining
+99.9956%. Implemented an early-exit on a **structural marker, not a byte offset or message
+count**: ITCH 5.0 guarantees every `'R'` is sent before the first System Event (`'S'`) message
+other than `'O'` (Start of Messages, always the session's first message). The next System Event
+— `'S'` Start of System Hours on this file, at byte 6,822,020 — marks the guaranteed end of the
+pre-session static-data phase. This holds for any spec-compliant file, not just this one.
+
+**Correctness safeguard**: an unresolvable `stock_locate` is a hard error, not a silent skip.
+`parse_file()`'s main pass now tracks the same boundary and throws `std::runtime_error` if a
+`'R'` message ever appears *after* it — a spec violation the early-exit assumes cannot happen.
+If it ever does (non-compliant file), the run fails loudly rather than silently proceeding with
+a possibly-incomplete locate map that could mis-book a later message. Two new tests cover this:
+`test_stock_directory_early_exit` (confirms the exit actually stops scanning — a directory
+message placed after the marker is correctly *not* picked up) and
+`test_late_stock_directory_hard_errors` (confirms `parse_file()` throws on a late `'R'`). All 16
+`lob_test` cases pass (was 14; the 2 new tests are additive, not replacements).
+
+**Hot path unaffected, confirmed not assumed**: only `itch_parser.cpp`/`main.cpp` changed —
+`BM_AddOrder`/`BM_DeleteOrder`/`BM_ExecuteOrder`/`BM_FullPipeline` re-run (5 reps,
+`--benchmark_min_time=2.0s`) show no shift outside normal run-to-run noise (`BM_FullPipeline`
+p50 17.25ns vs the recorded 16.93ns baseline — within this host's documented run-to-run
+variance, not a regression from this change; these benchmarks don't touch the parser at all).
+
+**Re-measured end-to-end, same file, same 5 tickers, same machine (Apple M3 Pro), single merged
+timer (locate resolution + parse + reconstruct + write) both before and after:**
+
+| Ticker | Before (s) | After (s) | Speedup | Before MB/s | After MB/s |
+|---|---|---|---|---|---|
+| AAPL | 27.87 | 15.05 | 1.85x | 296.1 | 548.4 |
+| AMZN | 27.77 | 14.84 | 1.87x | 297.2 | 555.9 |
+| ETSY | 27.31 | 14.58 | 1.87x | 302.1 | 565.9 |
+| NFLX | 27.65 | 14.57 | 1.90x | 298.4 | 566.3 |
+| WDAY | 27.55 | 14.34 | 1.92x | 299.6 | 575.5 |
+| **Average** | **27.63** | **14.68** | **1.88x** | | |
+
+**Speedup is ~1.88x, not the full 2x a byte-count argument alone would suggest — measured, not
+assumed, as instructed.** Likely explanation: the file's first ~6.8MB (needed for locate
+resolution) stays in the OS page cache across the whole run, since it's read again moments later
+at the very start of the main parse pass — so eliminating that scan doesn't remove a full,
+independent disk read, only the CPU/syscall overhead of re-scanning cached pages plus whatever
+fraction wasn't fully warm. The full-run average is now **14.68s** (down from 27.63s),
+**~19.5M msg/s single-pass-equivalent throughput** (268,744,780 total messages ÷ 14.68s average,
+consistent with the ~19.0-19.7M single-pass figures already recorded above — the whole run now
+*is* effectively one pass, matching prediction).
+
+This is a distinct, walled-off number from both the parse-only figure (18.4-18.8M msg/s,
+no book/feature reconstruction at all) and the retired 226M/7.8M claim (traced to always-broken
+zero-filtering code, not reproducible under any architecture this codebase has ever had).
 
 ## How to reproduce
 
