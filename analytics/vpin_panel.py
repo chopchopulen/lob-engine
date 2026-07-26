@@ -167,11 +167,14 @@ def bucket_series(df, adv_divisor, window):
     cum = 0
     b_gt_buy = b_gt_sell = 0
     b_lr_buy = b_lr_sell = 0
+    b_lr_buy_c = b_lr_sell_c = 0    # LR restricted to 'C' volume only (non-circular)
+    b_gt_buy_c = b_gt_sell_c = 0    # GT restricted to 'C' volume only (same population)
+    b_e_vol = b_c_vol = b_p_vol = 0
     b_vol = 0
     b_last_price = None
 
     for _, row in df.iterrows():
-        shares, price = row["shares"], row["price_d"]
+        shares, price, etype = row["shares"], row["price_d"], row["event_type"]
         b_last_price = price
         if row["gt_side"] == "B":
             b_gt_buy += shares
@@ -181,6 +184,20 @@ def bucket_series(df, adv_divisor, window):
             b_lr_buy += shares
         elif row["lr_side"] == "S":
             b_lr_sell += shares
+        if etype == "E":
+            b_e_vol += shares
+        elif etype == "C":
+            b_c_vol += shares
+            if row["lr_side"] == "B":
+                b_lr_buy_c += shares
+            elif row["lr_side"] == "S":
+                b_lr_sell_c += shares
+            if row["gt_side"] == "B":
+                b_gt_buy_c += shares
+            elif row["gt_side"] == "S":
+                b_gt_sell_c += shares
+        elif etype == "P":
+            b_p_vol += shares
         b_vol += shares
         cum += shares
         if cum >= bucket_size:
@@ -188,9 +205,14 @@ def bucket_series(df, adv_divisor, window):
                 "vol": b_vol, "close_price": b_last_price,
                 "gt_buy": b_gt_buy, "gt_sell": b_gt_sell,
                 "lr_buy": b_lr_buy, "lr_sell": b_lr_sell,
+                "e_vol": b_e_vol, "c_vol": b_c_vol, "p_vol": b_p_vol,
+                "lr_buy_c": b_lr_buy_c, "lr_sell_c": b_lr_sell_c,
+                "gt_buy_c": b_gt_buy_c, "gt_sell_c": b_gt_sell_c,
             })
             cum = 0
             b_gt_buy = b_gt_sell = b_lr_buy = b_lr_sell = b_vol = 0
+            b_lr_buy_c = b_lr_sell_c = b_gt_buy_c = b_gt_sell_c = 0
+            b_e_vol = b_c_vol = b_p_vol = 0
     if not buckets:
         return pd.DataFrame(), 0
 
@@ -215,6 +237,17 @@ def bucket_series(df, adv_divisor, window):
     bt["bvc_buy_frac"] = bt["bvc_buy"] / bt["vol"]
     bt["gt_labelable_frac"] = gt_denom / bt["vol"]   # how much of this bucket GT can even see
 
+    # composition, for visibility into the 'E'-tautology's structural advantage
+    bt["e_frac"] = bt["e_vol"] / bt["vol"]
+    bt["c_frac"] = bt["c_vol"] / bt["vol"]
+    bt["p_frac"] = bt["p_vol"] / bt["vol"]
+
+    # non-circular: LR and GT both restricted to 'C' volume only -- same population
+    c_denom = bt["c_vol"].replace(0, np.nan)
+    bt["lr_buy_frac_c"] = bt["lr_buy_c"] / c_denom
+    gt_c_denom = (bt["gt_buy_c"] + bt["gt_sell_c"]).replace(0, np.nan)
+    bt["gt_buy_frac_c"] = bt["gt_buy_c"] / gt_c_denom
+
     # complete-window VPIN count (secondary deliverable)
     imb_gt = (bt["gt_buy"] - bt["gt_sell"]).abs()
     roll_imb = imb_gt.rolling(window).sum()
@@ -238,42 +271,117 @@ def task3(scored_by_td):
     pooled = pd.concat(all_buckets, ignore_index=True) if all_buckets else pd.DataFrame()
 
     if pooled.empty:
-        return pd.DataFrame(), pooled, pd.DataFrame()
+        return pd.DataFrame(), pooled, pd.DataFrame(), {}
 
-    pooled["bvc_err"] = (pooled["bvc_buy_frac"] - pooled["gt_buy_frac"]).abs()
-    pooled["lr_err"] = (pooled["lr_buy_frac"] - pooled["gt_buy_frac"]).abs()
+    # BVC vs ground truth -- the standalone, non-circular headline. BVC has no
+    # trade-level information at all, so this is a clean test.
+    pooled["bvc_signed_err"] = pooled["bvc_buy_frac"] - pooled["gt_buy_frac"]
+    pooled["bvc_err"] = pooled["bvc_signed_err"].abs()
+
+    # Lee-Ready vs ground truth, WHOLE BUCKET -- kept for visibility only, not
+    # as a headline: most bucket volume is 'E', which LR classifies at 100%
+    # agreement by construction (see Task 2's circularity finding), so this
+    # number is inflated by the same tautology, not a genuine test of LR.
+    pooled["lr_err_wholebucket"] = (pooled["lr_buy_frac"] - pooled["gt_buy_frac"]).abs()
+
+    # Lee-Ready vs ground truth, 'C'-ONLY -- the non-circular figure. Both
+    # numerator and denominator restricted to the same 'C' population on both
+    # sides, so this is an apples-to-apples comparison (no 'P' volume in
+    # either the LR side or the GT reference here).
+    c_valid = pooled.dropna(subset=["lr_buy_frac_c", "gt_buy_frac_c"]).copy()
+    c_valid["lr_err_c"] = (c_valid["lr_buy_frac_c"] - c_valid["gt_buy_frac_c"]).abs()
 
     per_ticker = pooled.groupby("ticker").agg(
         n_buckets=("bvc_err", "size"),
         bvc_mae=("bvc_err", "mean"),
-        lr_mae=("lr_err", "mean"),
+        bvc_mean_signed_err=("bvc_signed_err", "mean"),
+        avg_e_frac=("e_frac", "mean"),
+        avg_c_frac=("c_frac", "mean"),
+        avg_p_frac=("p_frac", "mean"),
+        lr_mae_wholebucket_CIRCULAR=("lr_err_wholebucket", "mean"),
         avg_gt_labelable_frac=("gt_labelable_frac", "mean"),
     ).reset_index()
+
+    c_only_by_ticker = c_valid.groupby("ticker").agg(
+        n_buckets_with_c=("lr_err_c", "size"),
+        lr_mae_C_only=("lr_err_c", "mean"),
+    ).reset_index()
+    per_ticker = per_ticker.merge(c_only_by_ticker, on="ticker", how="left")
 
     overall = {
         "n_buckets": len(pooled),
         "bvc_mae": float(pooled["bvc_err"].mean()),
-        "lr_mae": float(pooled["lr_err"].mean()),
+        "bvc_mean_signed_err": float(pooled["bvc_signed_err"].mean()),
+        "bvc_signed_err_std": float(pooled["bvc_signed_err"].std()),
+        "lr_mae_wholebucket_CIRCULAR": float(pooled["lr_err_wholebucket"].mean()),
+        "lr_mae_C_only": float(c_valid["lr_err_c"].mean()) if len(c_valid) else None,
+        "n_buckets_with_c_volume": len(c_valid),
+        "avg_e_frac": float(pooled["e_frac"].mean()),
+        "avg_c_frac": float(pooled["c_frac"].mean()),
+        "avg_p_frac": float(pooled["p_frac"].mean()),
     }
 
-    # Divergence-vs-conditions: correlate error with (a) how much of the
-    # bucket is hidden/unlabelable, (b) bucket volatility (|close-price change|
-    # proxy already embedded via price_changes -- reuse bucket-to-bucket
-    # price move magnitude per ticker-date, recomputed here on pooled index
-    # per group since diff() must stay within a ticker-date).
+    # Divergence-vs-conditions: correlate BVC error with (a) how much of the
+    # bucket is hidden/unlabelable. (Lee-Ready-vs-hidden-fraction correlation
+    # dropped here since the whole-bucket LR MAE it was computed against is
+    # itself circular -- not a meaningful conditioning variable to report.)
     cond_rows = []
     for t in TICKERS:
         sub = pooled[pooled["ticker"] == t]
         if len(sub) < 5:
             continue
         r_bvc_hidden = np.corrcoef(sub["bvc_err"], 1 - sub["gt_labelable_frac"])[0, 1] if sub["bvc_err"].std() > 0 else float("nan")
-        r_lr_hidden = np.corrcoef(sub["lr_err"], 1 - sub["gt_labelable_frac"])[0, 1] if sub["lr_err"].std() > 0 else float("nan")
-        cond_rows.append({"ticker": t, "n": len(sub),
-                           "r_bvc_err_vs_hidden_frac": r_bvc_hidden,
-                           "r_lr_err_vs_hidden_frac": r_lr_hidden})
+        cond_rows.append({"ticker": t, "n": len(sub), "r_bvc_err_vs_hidden_frac": r_bvc_hidden})
     cond_tbl = pd.DataFrame(cond_rows)
 
     return per_ticker, pooled, cond_tbl, overall
+
+
+# ── Task 2 follow-up: why is tick-rule (at-midpoint) accuracy below chance? ──
+
+def opposite(side):
+    return "S" if side == "B" else ("B" if side == "S" else "U")
+
+
+def tick_rule_mechanism_check(scored_by_td):
+    """Tests the hypothesis that tick-rule accuracy at the midpoint is driven
+    by a mechanical artifact: since 'E' fills exactly at the prevailing bid or
+    ask (Section 2's tautology), and the tick rule compares a midpoint 'C'
+    print to whatever price immediately preceded it, the tick-rule label for
+    a midpoint trade is structurally determined by which side the PRECEDING
+    trade was on -- not by any real reversal signal. If order flow is
+    positively autocorrelated at lag 1 (consecutive trades tend to share the
+    same true side -- order-splitting/iceberg replenishment is the standard
+    mechanism), this mechanical "predict the opposite of whatever just
+    happened" rule will be wrong more than half the time, systematically."""
+    rows = []
+    for t in TICKERS:
+        same_side_num = same_side_den = 0
+        mech_opposite_num = mech_opposite_den = 0
+        for d in DATES:
+            if (t, d) not in scored_by_td:
+                continue
+            df = scored_by_td[(t, d)]
+            prev_gt = df["gt_side"].shift(1)
+            # lag-1 same-side rate, over ALL consecutive labelable trade pairs
+            mask_pair = (df["gt_side"] != "U") & (prev_gt != "U") & prev_gt.notna()
+            same_side_num += (df.loc[mask_pair, "gt_side"] == prev_gt[mask_pair]).sum()
+            same_side_den += mask_pair.sum()
+            # mechanism check, at-midpoint 'C' trades only
+            at_mid_c = (df["event_type"] == "C") & (df["gt_side"] != "U") & \
+                       (df["price_d"] == df["mid_d"]) & (prev_gt != "U") & prev_gt.notna()
+            if at_mid_c.sum() > 0:
+                predicted_opposite = prev_gt[at_mid_c].apply(opposite)
+                mech_opposite_num += (df.loc[at_mid_c, "lr_side"] == predicted_opposite).sum()
+                mech_opposite_den += at_mid_c.sum()
+        rows.append({
+            "ticker": t,
+            "lag1_same_side_rate_pct": 100.0 * same_side_num / same_side_den if same_side_den else None,
+            "n_lag1_pairs": int(same_side_den),
+            "tick_label_matches_opposite_of_prev_pct": 100.0 * mech_opposite_num / mech_opposite_den if mech_opposite_den else None,
+            "n_at_mid_c_with_known_prev": int(mech_opposite_den),
+        })
+    return pd.DataFrame(rows)
 
 
 def task3_noncanonical(scored_by_td, adv_divisor, window):
@@ -302,15 +410,33 @@ def main():
     tbl2, scored_by_td = task2(per_td)
     print("=== Task 2: Lee-Ready vs ground truth, 'C' trades ONLY, pooled across 7 dates ===")
     print("('E' excluded from scoring -- circular: ground truth IS which side of book 'E' hit)")
+    print("NOTE: tick_n == at_midpoint_n exactly in this data (every midpoint trade falls to")
+    print("tick-rule, no other trade does) -- quote_agree_pct = away-from-mid accuracy,")
+    print("tick_agree_pct = at-midpoint accuracy. Below-chance tick_agree_pct = inverted, not just noisy.")
     print(tbl2.to_string(index=False))
     print()
 
+    mech = tick_rule_mechanism_check(scored_by_td)
+    print("=== Task 2 follow-up: why is at-midpoint (tick-rule) accuracy below chance? ===")
+    print(mech.to_string(index=False))
+    print()
+
     per_ticker3, pooled3, cond3, overall3 = task3(scored_by_td)
-    print("=== Task 3 (primary): per-bucket 3-way divergence vs ground truth ===")
+    print("=== Task 3 (primary): BVC vs ground truth (standalone, non-circular headline) ===")
     print(f"Overall pooled: n_buckets={overall3['n_buckets']} "
-          f"BVC MAE={overall3['bvc_mae']:.4f} LR MAE={overall3['lr_mae']:.4f}")
+          f"BVC MAE={overall3['bvc_mae']:.4f} BVC mean signed err={overall3['bvc_mean_signed_err']:+.4f} "
+          f"(std={overall3['bvc_signed_err_std']:.4f})")
+    print(f"Bucket composition (avg): E={overall3['avg_e_frac']:.3f} C={overall3['avg_c_frac']:.3f} "
+          f"P={overall3['avg_p_frac']:.3f}")
+    print(f"Lee-Ready whole-bucket MAE (CIRCULAR, inflated by 'E' tautology): "
+          f"{overall3['lr_mae_wholebucket_CIRCULAR']:.4f}")
+    print(f"Lee-Ready 'C'-only MAE (non-circular figure, n_buckets_with_c={overall3['n_buckets_with_c_volume']}): "
+          f"{overall3['lr_mae_C_only']:.4f}" if overall3['lr_mae_C_only'] is not None else "Lee-Ready 'C'-only MAE: n/a")
+    print("VPIN propagation: per-bucket VPIN = |2b-1| for buy fraction b, so d(VPIN)/db = +-2 --")
+    print(f"a BVC buy-fraction MAE of {overall3['bvc_mae']:.3f} propagates to roughly "
+          f"{2*overall3['bvc_mae']:.3f} on VPIN's 0-1 scale.")
     print(per_ticker3.to_string(index=False))
-    print("Divergence vs bucket hidden-volume fraction (correlation):")
+    print("Divergence vs bucket hidden-volume fraction (BVC only -- LR-vs-hidden dropped, was circular):")
     print(cond3.to_string(index=False))
     print()
 
@@ -323,6 +449,7 @@ def main():
     # Persist
     tbl1.to_csv("analytics/panel_task1_hidden_volume.csv", index=False)
     tbl2.to_csv("analytics/panel_task2_lee_ready_C_only.csv", index=False)
+    mech.to_csv("analytics/panel_task2_tick_rule_mechanism.csv", index=False)
     per_ticker3.to_csv("analytics/panel_task3_divergence.csv", index=False)
     cond3.to_csv("analytics/panel_task3_divergence_conditions.csv", index=False)
     with open("analytics/panel_task3_vpin_counts.json", "w") as f:

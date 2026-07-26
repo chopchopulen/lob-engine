@@ -16,6 +16,13 @@
   "overall_divergence": {
     "n_buckets": 1712,
     "bvc_mae": 0.19810230645173751,
-    "lr_mae": 0.03139813840357258
+    "bvc_mean_signed_err": -0.00018223970830377303,
+    "bvc_signed_err_std": 0.2403130532741555,
+    "lr_mae_wholebucket_CIRCULAR": 0.03139813840357258,
+    "lr_mae_C_only": 0.2911088709848825,
+    "n_buckets_with_c_volume": 870,
+    "avg_e_frac": 0.7638905281687614,
+    "avg_c_frac": 0.005905092409159579,
+    "avg_p_frac": 0.23020437942207903
   }
 }
