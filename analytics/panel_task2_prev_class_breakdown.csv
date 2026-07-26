@@ -1,0 +1,16 @@
+ticker,prev_class,n,tick_accuracy_pct
+AAPL,prev_at_bid,438,19.40639269406393
+AAPL,prev_at_ask,429,21.678321678321677
+AAPL,prev_other,560,25.892857142857142
+AMZN,prev_at_bid,7,14.285714285714286
+AMZN,prev_at_ask,5,20.0
+AMZN,prev_other,34,0.0
+ETSY,prev_at_bid,33,18.181818181818183
+ETSY,prev_at_ask,20,20.0
+ETSY,prev_other,29,17.24137931034483
+NFLX,prev_at_bid,35,17.142857142857142
+NFLX,prev_at_ask,33,6.0606060606060606
+NFLX,prev_other,80,13.75
+WDAY,prev_at_bid,23,17.391304347826086
+WDAY,prev_at_ask,42,16.666666666666668
+WDAY,prev_other,58,6.896551724137931

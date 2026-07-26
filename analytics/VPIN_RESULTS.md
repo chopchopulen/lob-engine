@@ -106,44 +106,94 @@ rate is comparable-to-worse for AMZN (4.3%) and NFLX (12.8%).
 **Why is the tick rule below chance at the midpoint, not just noisy?** Investigated directly
 rather than assumed. Two checks, run on all 5 tickers:
 
-| Ticker | Lag-1 same-side rate (all trades) | n pairs | Tick label = opposite of immediate predecessor | n (at-mid `'C'`, known predecessor) |
-|---|---|---|---|---|
-| AAPL | 84.6% | 357,640 | 32.0% | 1,248 |
-| AMZN | 91.7% | 101,059 | 70.4% | 27 |
-| ETSY | 86.3% | 42,487 | 31.1% | 74 |
-| NFLX | 88.9% | 105,541 | 46.2% | 117 |
-| WDAY | 87.6% | 51,901 | 40.2% | 92 |
+**Before testing any hypothesis, ruled out a sign bug — the tick rule is exercised ONLY on
+at-midpoint trades (the quote rule handles everything else), so a flipped comparison would be
+invisible everywhere except exactly this subset and would look identical to what's observed.**
+Checked directly against spec and code, not assumed:
+- Tick direction (`vpin_pipeline.py`'s `lee_ready()`): `lbl = "B" if price > prev_price else
+  "S"` — uptick→buy, downtick→sell. Correct.
+- "Previous trade": `lee_ready()` iterates over the trades-only dataframe (`vpin_extract.cpp`'s
+  extraction, E/C/P only — never book-only adds/cancels/replaces), so `prev_price` is genuinely
+  the previous *trade*, not a quote update. Correct.
+- Ground-truth convention (`vpin_extract.cpp`): `gt_side = (resting.side == 'B') ? 'S' : 'B'` —
+  resting on bid → aggressor sold. Correct.
+- Cross-check: an inverted GT convention would also invert quote-rule (away-from-mid) accuracy
+  below chance. It doesn't (53-99% across all tickers) — GT and quote-rule are mutually
+  consistent, independently confirming both are right-way-round.
 
-**Order flow is strongly positively autocorrelated at lag 1 across every ticker (85-92% same-side
-rate)** — a real, robust, standalone finding: consecutive labelable trades share the same true
-side the large majority of the time, consistent with order-splitting/iceberg-replenishment
-clustering. This is not in question.
+**No sign bug. The inversion is real, not an artifact of a flipped comparison.**
 
-**The specific mechanical story tested — that the tick rule mechanically predicts the exact
-opposite of whichever trade immediately preceded it, because `'E'` fills exactly at the touch
-and the midpoint sits precisely between — is only partially supported.** If that mechanism held
-cleanly, "tick label = opposite of predecessor" should run close to 100%; instead it's 31-46%
-for 4 of 5 tickers (AMZN's 70.4% sits on only 27 observations, too thin to weight heavily). A
-likely reason the clean mechanical story doesn't fully hold: book-only messages (adds/cancels/
-replaces) can move the quote between the predecessor trade and the current one, so "the
-predecessor's price" and "the current midpoint" don't always sit in the fixed geometric
-relationship the simple derivation assumes. **Reporting this honestly rather than forcing the
-narrative**: the lag-1 order-flow clustering is real and large, and is plausibly a contributing
-ingredient (a tick rule that references stale, already-clustered price information should
-struggle when flow is this autocorrelated) — but the exact per-trade mechanical chain from
-"order flow clusters" to "tick rule inverts at the midpoint" is not fully pinned down by this
-check. Treating the *what* (tick rule is inverted at the midpoint, universally, not just for
-AAPL) as established, and the *why* (beyond "order flow clusters and the tick rule doesn't
-handle that well") as an open question.
+Tested the specific hypothesis: consecutive trades share the same aggressor side far more often
+than chance (order splitting); a midpoint trade following a same-side touch print registers as
+a tick in the *opposite* direction from its true side, mechanically inverting the rule. Three
+checks, all tickers:
+
+**(a) Lag-1 same-side rate, all ground-truth-labeled trades:**
+
+| Ticker | P(same side as previous trade) | n pairs |
+|---|---|---|
+| AAPL | 84.6% | 357,640 |
+| AMZN | 91.7% | 101,059 |
+| ETSY | 86.3% | 42,487 |
+| NFLX | 88.9% | 105,541 |
+| WDAY | 87.6% | 51,901 |
+
+Confirmed, strong, standalone: consecutive labelable trades share the same true side the large
+majority of the time.
+
+**(b) At-midpoint `'C'` trades, accuracy split by what the previous trade was** (previous trade
+printed at the bid / at the ask / neither — "other"), AAPL shown, same pattern all 5 tickers:
+
+| Previous-trade class | n | Tick-rule accuracy |
+|---|---|---|
+| Previous at bid | 438 | 19.4% |
+| Previous at ask | 429 | 21.7% |
+| Previous other | 560 | 25.9% |
+
+**(c) `'inherit'` (unchanged price → copy prior label) vs `'tick'` (price moved) accuracy,
+at-midpoint only**, AAPL shown:
+
+| Method | n | Accuracy |
+|---|---|---|
+| `tick` | 263 | 23.2% |
+| `inherit` | 1,164 (81.6% of at-midpoint trades — the *dominant* path, not `tick` proper) | 22.5% |
+
+**The specific mechanism as hypothesized does not hold — reported as failing, not fit to a
+story.** If a midpoint trade mechanically inheriting the opposite of a touch-adjacent
+predecessor were the driver, `prev_other` (where that clean geometric relationship breaks down)
+should look meaningfully different from `prev_at_bid`/`prev_at_ask`. It doesn't (19-26% across
+all three, AAPL; the same near-uniform badness holds on the other 4 tickers). Likewise, if
+`'inherit'` were merely occasionally propagating an otherwise-good `'tick'` signal, `inherit`
+accuracy should exceed `tick` accuracy by some margin. It doesn't (22.5% vs 23.2%, AAPL —
+statistically indistinguishable, same pattern elsewhere). Both checks argue against the precise
+geometric chain (E-fills-sit-exactly-at-touch → midpoint-sits-precisely-between → mechanical
+reversal) as the operative mechanism, since that specific story predicts a contrast between
+these groups that isn't there.
+
+**What the evidence does support, stated at the confidence it earns**: lag-1 same-side
+persistence is real, large, and confirmed (84.6%-91.7%, all tickers) — this is not in question.
+The broader, less precise conclusion is defensible: in a regime with this much same-side
+persistence, any classifier that reads a recent price *change* as a directional signal (the
+tick rule's entire premise) will be wrong most of the time whenever price is flat or ambiguous,
+because the flow underneath a flat/near-flat print is disproportionately likely to be a
+continuation, not a reversal — but the exact geometric pathway from "'E' fills at touch" to
+"this specific midpoint print inverts" is not what the data shows driving it, since the
+`prev_class` and `tick`-vs-`inherit` splits fail to discriminate the way that precise mechanism
+predicts. Treating the *what* (tick-rule inversion at the midpoint, universal across all 5
+tickers, 4.3%-22.6% accuracy) as fully established; the *why* as: **persistence is a real,
+contributing background condition, and the specific mechanical chain proposed for it is tested
+and refuted** — a narrower, more honest claim than "order flow clustering explains it," which
+overstates what these three checks actually show.
 
 **Core takeaway for Task 2, stated as instructed**: on a direct sequenced feed, the quote rule
 is redundant with the book for lit trades that fill at the touch (`'E'`), genuinely testable
 only on the price-improved `'C'` sliver, and completely untestable on the hidden `'P'` flow
 where a classifier is actually needed in the absence of book access. Away-from-mid accuracy
 (53-99%) is the honest measure of the quote rule proper; at-midpoint/tick-rule accuracy is
-badly inverted (4-23%) for every ticker tested, for reasons only partially understood. Neither
-number is a stand-in for how well Lee-Ready would do on `'P'` — only the closest proxy this
-dataset can produce.
+badly inverted (4-23%) for every ticker tested — confirmed not a sign bug, associated with
+strong trade-side persistence, but not fully explained by the specific mechanism tested for it.
+Neither number is a stand-in for how well Lee-Ready would do on `'P'` — only the closest proxy
+this dataset can produce.
 
 ## 3. BVC vs ground truth — the novel per-bucket classification-divergence result
 
@@ -296,5 +346,6 @@ Raw ITCH files (8-13GB decompressed each) are not checked in (`data/` and `analy
 are both gitignored — same rationale as the rest of this repo's raw/derived data). Persisted
 summary outputs: `analytics/panel_task1_hidden_volume.csv`,
 `analytics/panel_task2_lee_ready_C_only.csv`, `analytics/panel_task2_tick_rule_mechanism.csv`,
-`analytics/panel_task3_divergence.csv`, `analytics/panel_task3_divergence_conditions.csv`,
-`analytics/panel_task3_vpin_counts.json`.
+`analytics/panel_task2_lag1_persistence.csv`, `analytics/panel_task2_prev_class_breakdown.csv`,
+`analytics/panel_task2_tick_vs_inherit.csv`, `analytics/panel_task3_divergence.csv`,
+`analytics/panel_task3_divergence_conditions.csv`, `analytics/panel_task3_vpin_counts.json`.
