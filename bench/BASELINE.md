@@ -317,50 +317,95 @@ produce. Do not cite 226M/7.8M/29.0s going forward. The two numbers above are th
 reproducible substitutes, kept walled off from each other and from the BX `bench_parser` figure
 (different data, different scope, do not average or compare them as if validating one another).
 
-## Real end-to-end panel-regeneration measurement (2026-07-25) — the number that was actually missing
+## Real end-to-end measurement (2026-07-25, corrected) — the number that was actually missing
 
 Before this, the project had microbenchmarks (synthetic book ops, `BM_AddOrder` etc.) and one
 parse-only figure (18.4-18.8M msg/s, no book/feature reconstruction) — genuinely nothing
-measuring the full parse+book+feature pipeline on real data end to end. Measured the actual
-5-ticker regeneration this project's whole panel was built with: `./lob_engine
-data/raw/12302019.NASDAQ_ITCH50 <TICKER> <out.csv>` run once per study ticker (AAPL, AMZN, ETSY,
-NFLX, WDAY), same file used throughout this session, Apple M3 Pro.
+measuring the full parse+book+feature pipeline on real data end to end. An earlier version of
+this section reported a "~18.8k msg/s" end-to-end figure — **that figure was a mismatched-
+denominator artifact, not a real measurement, and is corrected below, not just re-labeled.**
 
-| Ticker | Messages matched | Internal `Elapsed` (program's own timer) | External wall-clock (`/usr/bin/time`) |
-|---|---|---|---|
-| AAPL | 1,512,179 | 14.13s | 27.62s |
-| AMZN | 524,554 | 14.52s | 27.33s |
-| ETSY | 102,422 | 14.50s | 27.68s |
-| NFLX | 314,560 | 14.33s | 27.35s |
-| WDAY | 125,253 | 14.23s | 27.38s |
-| **Total** | **2,578,968** | **71.71s** | **137s** (measured directly, matches sum of the 5 `real` times) |
+**Diagnosis of the ~18.8k msg/s artifact (confirmed against the code, not assumed):**
+`main.cpp`'s printed `Throughput` was `msg_count / elapsed_s`, where `msg_count` only increments
+inside callbacks for messages that passed the ticker's `stock_locate` filter (e.g. 1,512,179 for
+AAPL — 0.56% of the file), while `elapsed_s` timed only `ItchParser::parse_file()` — and, before
+the fix below, that timer excluded `parse_stock_directory()`'s own separate full-file scan
+entirely. So the printed number was **(filtered match count) / (one incomplete partial-scan
+duration)** — a filtered numerator over a denominator that was itself wrong twice over. That's
+exactly why it landed ~1000x below the parse-only figure and implied ~53 μs/message against
+15-17ns microbenchmarked book ops: it was never a per-message throughput at all.
 
-**Aggregate: ~35,964 msg/s by the program's own internal timer, ~18,825 msg/s by real
-user-facing wall-clock.** Neither is a "throughput" number in the same sense as the parse-only
-figure — every run rescans the *entire* 8.25GB/263.24M-message file to extract one ticker's
-0.04%-0.6% share, so this is dominated by scan cost for messages that don't match, not
-per-message compute (already covered correctly by `BM_AddOrder`/`BM_ExecuteOrder` at 8-15ns/op).
-It answers a different, real question: **how long does it actually take to regenerate one
-date's full study panel**, end to end, on this machine — **~137 seconds for all 5 tickers**, the
-literal, previously-unmeasured cost of the exact pipeline that produced every panel CSV in this
-project.
+**Fix 1 — timer now covers the entire run.** `main.cpp` (both single- and dual-ticker mode) had
+`t0` starting *after* `parse_stock_directory()`'s full-file scan; moved it to start before that
+call, so `elapsed_s` now covers locate resolution + parse + reconstruct + CSV write as one
+honest figure. Also removed the misleading `msg_count/elapsed_s` "Throughput" line entirely —
+replaced with file-size/elapsed_s (MB/s), which is unambiguous regardless of filter selectivity.
+Verified: all 14 `lob_test` cases still pass; this only touches `main.cpp`, not the benchmarked
+hot path (`bench_book.cpp`/`bench_pipeline.cpp` don't call it), so `bench/BASELINE.md`'s
+microbenchmark numbers above are unaffected.
 
-**Bonus finding, not previously known: the program's own printed `Elapsed` undercounts real
-cost by roughly 2x.** External wall-clock (~27.5s/ticker) is consistently about double the
-internal `Elapsed` (~14.3s/ticker) it prints. Traced to the cause: `main.cpp` calls
-`ItchParser::parse_stock_directory()` to resolve the ticker's `stock_locate` *before* starting
-its own timer — and `parse_stock_directory` does its own full sequential scan of the same
-8.25GB file (looking only for `'R'` messages) to build the locate map. That scan is real,
-consistently costs about as much as the timed parse itself, and is never included in anything
-the tool reports. Not fixed here (out of scope for this measurement task) — flagged because
-`main.cpp`'s printed "Elapsed"/"Throughput" have understated the tool's real per-run cost by
-roughly 2x this whole time, on every single-ticker and dual-ticker run in this project's
-history, including the 12/30/2019 measurement earlier in this file.
+**Properly-paired measurement**, `./lob_engine data/raw/12302019.NASDAQ_ITCH50 <TICKER>
+<out.csv>`, all 5 study tickers, same file used throughout this session, Apple M3 Pro:
+
+**(a) Total messages scanned from the file**: **268,744,780** (exact count, every length-
+prefixed frame in the file, verified independently in Python — differs from the
+`bench_parser`/`BM_ParseFile` figure of 263.24M because that count only includes message types
+with a wired-up callback in that benchmark, excluding `'P'` and other unhandled types; this is
+every frame, unambiguous). The current implementation scans this full-file count **twice** per
+single-ticker run: once in `parse_stock_directory()` (locate resolution, minimal decode) and
+once in `parse_file()` (full decode + filter + dispatch).
+
+**(b) Messages actually applied to each study ticker's book** (the filtered count `main.cpp`
+already printed, unchanged by this fix):
+
+| Ticker | Messages applied to book | % of file |
+|---|---|---|
+| AAPL | 1,512,179 | 0.563% |
+| AMZN | 524,554 | 0.195% |
+| ETSY | 102,422 | 0.038% |
+| NFLX | 314,560 | 0.117% |
+| WDAY | 125,253 | 0.047% |
+
+**Corrected, properly-paired throughput figures** (total messages scanned ÷ time for that scan,
+not matched-count ÷ scan-time):
+
+| Ticker | Single-pass parse+reconstruct only (268.74M ÷ pre-fix parse-only duration) | Full corrected run, both passes (2×268.74M ÷ new single-timer `Elapsed`) | Full-run MB/s (2× file size ÷ `Elapsed`) | For reference only — matched msgs ÷ full-run wall time (NOT a throughput metric) |
+|---|---|---|---|---|
+| AAPL | 19.02M msg/s | 19.29M msg/s | 592.1 MB/s | 0.0543M |
+| AMZN | 18.51M msg/s | 19.36M msg/s | 594.3 MB/s | 0.0189M |
+| ETSY | 18.54M msg/s | 19.68M msg/s | 604.2 MB/s | 0.0037M |
+| NFLX | 18.76M msg/s | 19.44M msg/s | 596.9 MB/s | 0.0114M |
+| WDAY | 18.88M msg/s | 19.51M msg/s | 599.1 MB/s | 0.0045M |
+
+**This confirms the diagnosis cleanly**: once the numerator (total messages actually scanned)
+is paired with the denominator that produced it (the scan's own duration), real end-to-end
+throughput lands at **~19.0-19.7M msg/s** — consistent with, and in fact slightly *above*, the
+existing parse-only figure (18.4-18.8M msg/s), exactly as expected since book reconstruction for
+a <1%-of-file matched subset adds negligible overhead on top of full-file scanning cost. The
+"reference only" column (what the original artifact was computing) is 3-4 orders of magnitude
+lower purely because its numerator excludes 99.4%+ of the very messages its denominator's time
+was spent scanning — confirmed as the root cause, not merely a plausible guess.
 
 **This is a distinct number from the retired 226M/7.8M claim, not a correction of it** — that
-claim measured (on now-known-broken code) something architecturally impossible to reproduce
-today (see above); this measures the real, current, single-ticker-filtered full-pipeline cost,
-which the retired claim never actually was.
+claim was traced to always-broken zero-filtering code at the initial commit (see above) and
+doesn't correspond to any measurement this architecture can produce; this measures the real,
+current, single-ticker-filtered full-pipeline throughput, properly paired.
+
+### Is the double full-file scan necessary? Measured, not yet fixed
+
+`parse_stock_directory()` scans the entire 8.25GB file looking for `'R'` (Stock Directory)
+messages, which per the ITCH 5.0 spec arrive once per instrument at session start. Checked
+directly against this file: **all 8,906 `'R'` messages fall within the first 365,464 bytes —
+0.0044% of the 8,251,407,909-byte file.** There is no `'R'` message anywhere in the remaining
+99.9956% of the file. An early-exit (stop `parse_stock_directory()`'s scan once messages stop
+being `'R'`-type for some margin past the last one seen, or simply once N consecutive non-`'R'`
+messages have been read) would eliminate essentially all of that scan's I/O and CPU cost —
+roughly halving total per-run wall time (locate resolution currently costs about as much as the
+entire filtered parse, per the pass-1/pass-2 split above), a ~19.0-19.7M msg/s single-pass
+figure would then apply to the *whole* run instead of needing a doubled-scan denominator, and
+`bench/BASELINE.md`'s corrected 19.29-19.68M full-run figures above would roughly double again.
+**Not implemented here — this is a measurement and a proposal only, per instruction.** If
+implemented, re-measure end-to-end before/after and update this section.
 
 ## How to reproduce
 

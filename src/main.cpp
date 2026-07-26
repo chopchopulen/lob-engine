@@ -3,6 +3,7 @@
 #include <chrono>
 #include <algorithm>
 #include <fstream>
+#include <filesystem>
 #include <unordered_map>
 #include <vector>
 #include "feed/itch_parser.h"
@@ -38,6 +39,15 @@ int main(int argc, char* argv[]) {
     if (argc == 4) {
         const std::string ticker     = argv[2];
         const std::string output_csv = argv[3];
+
+        // Timer starts here, BEFORE stock-directory resolution: parse_stock_directory()
+        // does its own full sequential scan of the file (looking only for 'R'
+        // messages) and previously ran entirely untimed, silently excluded from
+        // "Elapsed" below — that undercounted real per-run cost by roughly 2x
+        // (see bench/BASELINE.md, "Real end-to-end panel-regeneration measurement").
+        // One honest timer now covers the whole run: locate resolution + parse +
+        // reconstruct + CSV write.
+        auto t0 = std::chrono::steady_clock::now();
 
         // Resolve ticker -> stock_locate via the file's Stock Directory ('R')
         // messages. Filtering is then done on stock_locate for every message
@@ -95,15 +105,12 @@ int main(int argc, char* argv[]) {
             ++msg_count;
         };
 
-        auto t0 = std::chrono::steady_clock::now();
         try {
             ItchParser::parse_file(itch_file, cb, {locate});
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << "\n";
             return 1;
         }
-        auto t1 = std::chrono::steady_clock::now();
-        double elapsed_s = std::chrono::duration<double>(t1 - t0).count();
 
         try {
             features.write_csv(output_csv);
@@ -111,15 +118,30 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error writing CSV: " << e.what() << "\n";
             return 1;
         }
+        auto t1 = std::chrono::steady_clock::now();
+        double elapsed_s = std::chrono::duration<double>(t1 - t0).count();
 
+        // "Messages processed" is the count matched to this ticker's
+        // stock_locate, not the file's total message count -- every run
+        // scans the whole file twice (once for stock-directory resolution,
+        // once for the filtered parse) regardless of how few messages match,
+        // so "matched messages / elapsed_s" is NOT a meaningful throughput
+        // figure (it conflates a filtered numerator with a full-file-scan
+        // denominator). Reporting file size / elapsed_s (MB/s) instead, which
+        // is unambiguous regardless of filter selectivity. See
+        // bench/BASELINE.md "Real end-to-end panel-regeneration measurement"
+        // for the properly-paired total-messages-scanned/time figure.
+        double file_mb = std::filesystem::file_size(itch_file) / 1e6;
         std::cout << "Done.\n"
-                  << "  Messages processed:  " << msg_count   << "\n"
+                  << "  Messages matched (this ticker): " << msg_count   << "\n"
                   << "  Trades:              " << trade_count << "\n"
                   << "  Feature rows:        " << features.rows().size() << "\n"
                   << "  Active orders left:  " << book.num_orders() << "\n"
-                  << "  Elapsed:             " << elapsed_s   << "s\n"
-                  << "  Throughput:          "
-                  << (msg_count / elapsed_s / 1e6) << "M msg/s\n\n"
+                  << "  Elapsed (full run: locate resolution + parse + reconstruct + write): "
+                  << elapsed_s << "s\n"
+                  << "  File size:           " << file_mb << " MB\n"
+                  << "  Effective I/O rate:  " << (file_mb / elapsed_s) << " MB/s "
+                  << "(file is scanned twice per run; see note above)\n\n"
                   << "Features written to: " << output_csv << "\n";
         return 0;
     }
@@ -128,6 +150,11 @@ int main(int argc, char* argv[]) {
     const std::string ticker1    = argv[2];
     const std::string ticker2    = argv[3];
     const std::string output_csv = argv[4];
+
+    // Timer starts before stock-directory resolution -- see the single-ticker
+    // mode comment above for why (that scan was previously untimed, undercounting
+    // real per-run cost by roughly 2x).
+    auto t0 = std::chrono::steady_clock::now();
 
     // Resolve both tickers -> stock_locate up front. Every message (including
     // D/U/E/C/X) carries its own stock_locate, so routing below needs no
@@ -227,15 +254,12 @@ int main(int argc, char* argv[]) {
     };
 
     // ── Parse ─────────────────────────────────────────────────────────────
-    auto t0 = std::chrono::steady_clock::now();
     try {
         ItchParser::parse_file(itch_file, cb, {locate1, locate2});
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
-    auto t1 = std::chrono::steady_clock::now();
-    double elapsed_s = std::chrono::duration<double>(t1 - t0).count();
 
     // ── Guard: both tickers must have produced rows ────────────────────────
     if (feat1.rows().empty()) {
@@ -287,16 +311,25 @@ int main(int argc, char* argv[]) {
                 << r1.mid_price   << "," << r1.ofi << ","
                 << r2.mid_price   << "," << r2.ofi << "\n";
     }
+    auto t1 = std::chrono::steady_clock::now();
+    double elapsed_s = std::chrono::duration<double>(t1 - t0).count();
 
+    // See single-ticker mode's comment above: matched-message counts divided
+    // by elapsed_s is not a meaningful throughput (filtered numerator, full-
+    // file-scan denominator) -- MB/s is unambiguous regardless of filter
+    // selectivity.
+    double file_mb = std::filesystem::file_size(itch_file) / 1e6;
     std::cout << "Done.\n"
-              << "  " << ticker1 << " messages:    " << cnt1        << "\n"
-              << "  " << ticker2 << " messages:    " << cnt2        << "\n"
+              << "  " << ticker1 << " messages matched: " << cnt1        << "\n"
+              << "  " << ticker2 << " messages matched: " << cnt2        << "\n"
               << "  " << ticker1 << " feature rows: " << feat1.rows().size() << "\n"
               << "  " << ticker2 << " feature rows: " << feat2.rows().size() << "\n"
               << "  Combined rows (aligned seconds): " << common_secs.size() << "\n"
-              << "  Elapsed: " << elapsed_s << "s\n"
-              << "  Throughput: "
-              << ((cnt1 + cnt2) / elapsed_s / 1e6) << "M msg/s\n\n"
+              << "  Elapsed (full run: locate resolution + parse + reconstruct + write): "
+              << elapsed_s << "s\n"
+              << "  File size:          " << file_mb << " MB\n"
+              << "  Effective I/O rate: " << (file_mb / elapsed_s) << " MB/s "
+              << "(file is scanned twice per run; see note above)\n\n"
               << "Combined CSV written to: " << output_csv << "\n";
     return 0;
 }

@@ -59,20 +59,26 @@ real Nasdaq main-feed file (2019-12-30, 263.24M total messages, all instruments)
 
 ```
 Done.
-  Messages processed:  1512179
+  Messages matched (this ticker): 1512179
   Trades:              60543
   Feature rows:        24729
   Active orders left:  0
-  Elapsed:             13.5392s
-  Throughput:          0.111689M msg/s
+  Elapsed (full run: locate resolution + parse + reconstruct + write): 27.8694s
+  File size:           8251.41 MB
+  Effective I/O rate:  296.074 MB/s (file is scanned twice per run; see note above)
 
 Features written to: data/features_AAPL.csv
 ```
 
-"Messages processed" is AAPL's own filtered count (~0.57% of the file's 263.24M total) — every
-message type carries `stock_locate`, so filtering happens per-message, not via a separate pass.
-Elapsed time is dominated by sequentially scanning the full file for AAPL's messages, not by
-per-message book-update cost (see [`bench/BASELINE.md`](bench/BASELINE.md) for that: 8-15ns/op).
+"Messages matched" is AAPL's own filtered count (~0.56% of the file's 268.74M total messages)
+— every message type carries `stock_locate`, so filtering happens per-message, not via a
+separate pass. `Elapsed` covers the whole run, including `parse_stock_directory()`'s own
+full-file scan for ticker→locate resolution — an earlier version of this tool timed only the
+main parse and undercounted real cost by ~2x; see
+[`bench/BASELINE.md`](bench/BASELINE.md)'s "Real end-to-end measurement" for the fix and the
+properly-paired throughput figures (real end-to-end throughput is ~19.0-19.7M msg/s once
+correctly paired — "matched messages ÷ elapsed" is not a meaningful metric, since it divides a
+filtered count by a full-file-scan time; that's why "Throughput" was replaced with MB/s above).
 An **older version of this README previously cited a 226M-messages/7.8M-msg/s/29.0s figure for
 this example — that figure was retired 2026-07-25 after a real file became available to test it.
 It does not correspond to any measurement this codebase can produce**: `OrderBook` reconstructs
