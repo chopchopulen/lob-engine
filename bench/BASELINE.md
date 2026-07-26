@@ -247,6 +247,27 @@ benchmarks, including `BM_FullPipeline`. Only mean and p50 are currently defensi
 single-sample citable statistics; p99 and p999 require the same treatment — reported only as
 a multi-repetition range, or not cited at all, on this unpinned host.
 
+## End-to-end throughput (226M messages, 7.8M msg/s, 29.0s) — origin traced (2026-07-25)
+
+**Traced to the original source, not just inferred.** Checked out this repo's very first commit
+(`1077ae9`) and read `src/main.cpp`/`src/feed/itch_parser.cpp` as they existed then, since the
+retirement below was based on today's architecture and the question was raised whether the
+original claim instead referred to an already-existing filtered path. It did not:
+`itch_parser.cpp`'s own comment at that commit reads `// Offset 1-2 is stock_locate (we skip
+it).` — **there was no ticker filtering anywhere in the codebase at that point, not in the
+parser, not in `main.cpp`.** Every callback (`on_add`/`on_delete`/`on_replace`/`on_execute`)
+called `book.add_order`/etc. unconditionally for every message in the file, regardless of
+instrument. "Single-ticker mode" built one `OrderBook` and fed it literally every message in
+the file — a nonsensical merged-instrument book, and a **more complete** version of the same
+class of bug this project's Task 2 (`stock_locate`-based filtering, commit `3253443`) later
+fixed (that fix addressed partial filtering loss on `'D'/'U'/'E'/'C'/'X'`; at the very first
+commit there was no filtering at all, on any message type). Under that code, `msg_count` in
+`main.cpp` is essentially the whole file's message count — which is exactly the shape of 226M.
+**Conclusion: the original claim was almost certainly measured against this always-broken,
+zero-filtering parser, on a file that has never been identified. It was not a legitimate
+filtered end-to-end path being exercised — the retirement below stands, with source-history
+evidence now backing it rather than only inference.**
+
 ## End-to-end throughput (226M messages, 7.8M msg/s, 29.0s) — VERDICT: RETIRED, replaced below (2026-07-25)
 
 A raw main-feed file (2019-12-30, `data/raw/12302019.NASDAQ_ITCH50`, 8.25GB decompressed)
@@ -295,6 +316,51 @@ that combined figure doesn't correspond to a measurement this codebase's archite
 produce. Do not cite 226M/7.8M/29.0s going forward. The two numbers above are the closest real,
 reproducible substitutes, kept walled off from each other and from the BX `bench_parser` figure
 (different data, different scope, do not average or compare them as if validating one another).
+
+## Real end-to-end panel-regeneration measurement (2026-07-25) — the number that was actually missing
+
+Before this, the project had microbenchmarks (synthetic book ops, `BM_AddOrder` etc.) and one
+parse-only figure (18.4-18.8M msg/s, no book/feature reconstruction) — genuinely nothing
+measuring the full parse+book+feature pipeline on real data end to end. Measured the actual
+5-ticker regeneration this project's whole panel was built with: `./lob_engine
+data/raw/12302019.NASDAQ_ITCH50 <TICKER> <out.csv>` run once per study ticker (AAPL, AMZN, ETSY,
+NFLX, WDAY), same file used throughout this session, Apple M3 Pro.
+
+| Ticker | Messages matched | Internal `Elapsed` (program's own timer) | External wall-clock (`/usr/bin/time`) |
+|---|---|---|---|
+| AAPL | 1,512,179 | 14.13s | 27.62s |
+| AMZN | 524,554 | 14.52s | 27.33s |
+| ETSY | 102,422 | 14.50s | 27.68s |
+| NFLX | 314,560 | 14.33s | 27.35s |
+| WDAY | 125,253 | 14.23s | 27.38s |
+| **Total** | **2,578,968** | **71.71s** | **137s** (measured directly, matches sum of the 5 `real` times) |
+
+**Aggregate: ~35,964 msg/s by the program's own internal timer, ~18,825 msg/s by real
+user-facing wall-clock.** Neither is a "throughput" number in the same sense as the parse-only
+figure — every run rescans the *entire* 8.25GB/263.24M-message file to extract one ticker's
+0.04%-0.6% share, so this is dominated by scan cost for messages that don't match, not
+per-message compute (already covered correctly by `BM_AddOrder`/`BM_ExecuteOrder` at 8-15ns/op).
+It answers a different, real question: **how long does it actually take to regenerate one
+date's full study panel**, end to end, on this machine — **~137 seconds for all 5 tickers**, the
+literal, previously-unmeasured cost of the exact pipeline that produced every panel CSV in this
+project.
+
+**Bonus finding, not previously known: the program's own printed `Elapsed` undercounts real
+cost by roughly 2x.** External wall-clock (~27.5s/ticker) is consistently about double the
+internal `Elapsed` (~14.3s/ticker) it prints. Traced to the cause: `main.cpp` calls
+`ItchParser::parse_stock_directory()` to resolve the ticker's `stock_locate` *before* starting
+its own timer — and `parse_stock_directory` does its own full sequential scan of the same
+8.25GB file (looking only for `'R'` messages) to build the locate map. That scan is real,
+consistently costs about as much as the timed parse itself, and is never included in anything
+the tool reports. Not fixed here (out of scope for this measurement task) — flagged because
+`main.cpp`'s printed "Elapsed"/"Throughput" have understated the tool's real per-run cost by
+roughly 2x this whole time, on every single-ticker and dual-ticker run in this project's
+history, including the 12/30/2019 measurement earlier in this file.
+
+**This is a distinct number from the retired 226M/7.8M claim, not a correction of it** — that
+claim measured (on now-known-broken code) something architecturally impossible to reproduce
+today (see above); this measures the real, current, single-ticker-filtered full-pipeline cost,
+which the retired claim never actually was.
 
 ## How to reproduce
 

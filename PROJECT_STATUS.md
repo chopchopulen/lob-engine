@@ -53,6 +53,7 @@ that — positive, non-crossed, sub-dollar spreads — before any new data is tr
 | Per-benchmark mean/p50 for all 8 benchmarks | `bench/BASELINE.md` Phase 3 table | cv ≤2.81% across 8 reps — stable, safe to cite single-sample |
 | Pool-allocator fix: -28% to -54% mean latency reduction (5 of 6 op-touching benchmarks) | `bench/BASELINE.md` Phase 4 | ExecuteOrder correctly shows ~0% (never touches `orders_` insert/erase) — not a partial fix |
 | Whole-file parse throughput: 18.4-18.8M msg/s, 263.24M messages, real main-feed data (2019-12-30) | `bench/BASELINE.md` "End-to-end throughput" | Parse-only (no book/feature reconstruction); replaces the retired 226M/7.8M end-to-end claim, not a like-for-like number — see caveat in source |
+| Real end-to-end panel regeneration: 5 tickers, 12/30/2019, ~137s wall-clock total (~18.8k msg/s user-facing, ~36.0k msg/s by the program's own timer) | `bench/BASELINE.md` "Real end-to-end panel-regeneration measurement" | Full parse+book+feature pipeline, the actual methodology behind every panel CSV — distinct from (not a correction of) the retired 226M/7.8M claim, which traced to always-broken zero-filtering code at the initial commit. Also surfaced: `main.cpp`'s own printed "Elapsed" undercounts real per-run cost by ~2x (excludes `parse_stock_directory`'s own full-file scan) |
 
 **Contemporaneous OFI construction validation is now claimable — the first real research
 result this project has had:**
