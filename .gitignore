@@ -31,3 +31,4 @@ analytics/trades/
 
 # macOS metadata
 .DS_Store
+results/signal_decay.png

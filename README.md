@@ -226,30 +226,17 @@ corrected equivalent — they were not re-run on the clean panel, so no result i
 either.** The normalization-hurts conclusion and the no-lead-lag conclusion are both currently
 unsupported; they may well be true, but nothing in this repository demonstrates them.
 
-`results/signal_decay.png` was generated from the stale data and has been left in place only as
-a build artifact; it is not a result.
+`results/signal_decay.png` was generated from the stale data and has been removed from version
+control as a build artifact of a retired dataset; it is not a result.
 
 ---
 
-### Research Question 2 — Spread vs. Volatility Regimes (Glosten-Milgrom)
+### Research Question 2 — Spread vs. Volatility Regimes — RETIRED
 
-The Glosten-Milgrom (1985) model predicts that market makers widen spreads in high-volatility regimes to compensate for increased adverse selection risk. To test this, observations are partitioned into quintiles by 5-minute rolling realized variance, and the average quoted spread is measured per quintile.
-
-Spearman rank correlations between realized variance and quoted spread:
-
-| Ticker | ρ (Spearman) | p-value |
-|---|---|---|
-| AMZN | −0.457 | < 10⁻³⁰⁰ |
-| AAPL | −0.386 | < 10⁻³⁰⁰ |
-
-**Note on sign:** the negative correlation appears to contradict Glosten-Milgrom, but is largely an artifact of how quoted spread behaves during the open and close auctions (where the book is thin and spreads are mechanically near zero) coinciding with high realized variance from overnight gaps. During continuous trading hours, within-quintile median spreads are more stable. A cleaner test would restrict to the 9:45–15:45 core trading window and use intraday realized variance. This is a known limitation of the current implementation and a planned improvement.
-
-> **⚠️ Same data vintage as the removed OFI sections.** `docs/FINAL_NUMBERS.md` does not list
-> this result as retired, so it is left in place — but both inputs (quoted spread and realized
-> variance) come from the same book reconstruction and the same undisclosed-extended-hours
-> sample as the OFI work removed above, and this test was **not re-run on the clean 7-date
-> panel**. Treat the ρ values as unverified pending a re-run. The stated open/close-auction
-> confound is a second, independent reason not to cite the sign.
+Retired for the same data-provenance reason as the OFI iterations above: computed on the
+corrupted book reconstruction and the undisclosed-extended-hours sample, never re-run on the
+clean 5-ticker × 7-date panel. No corrected equivalent exists, so no result is claimed. See
+`docs/FINAL_NUMBERS.md`.
 
 ---
 
