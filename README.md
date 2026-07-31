@@ -1,3 +1,21 @@
+> # ⚠️ READ [`docs/FINAL_NUMBERS.md`](docs/FINAL_NUMBERS.md) FIRST
+>
+> **[`docs/FINAL_NUMBERS.md`](docs/FINAL_NUMBERS.md) is the single source of truth** for every
+> number in this project. It separates what is CLAIMABLE from what is RETIRED, lists what is
+> still OPEN, and gives the reproduction pointer for each figure. If a number appears in this
+> README and not there, treat this README as stale.
+>
+> Retired and no longer citable: all pre-harness-fix latency figures (tick-quantized by the
+> ~41.667 ns Apple Silicon timer), the p99/p999 tail latencies (unmeasurable on this host),
+> the "226M messages / 7.8M msg/s / 29.0 s" throughput claim (the parser had no ticker
+> filtering at that commit), and **the entire original OFI research section** — it was computed
+> on a book reconstruction corrupted by a `uint32_t` underflow bug, using a within-day 70/30
+> split that crosses the intraday U-shape regime boundary, on data that was 58% undisclosed
+> extended-hours. The corrected panel study replaces it below.
+>
+> Full defect list: [`audit/FINDINGS.md`](audit/FINDINGS.md).
+> Benchmark methodology and cv tables: [`bench/BASELINE.md`](bench/BASELINE.md).
+
 # lob-engine
 
 A high-performance C++17 limit order book reconstruction engine for Nasdaq ITCH 5.0 binary feeds, with microstructure feature extraction and out-of-sample alpha research.
@@ -136,90 +154,80 @@ with isolated CPUs. Full cv table: [`bench/BASELINE.md`](bench/BASELINE.md).
 
 ## Research Results
 
-All regressions use a time-series 70/30 train/test split (first 70% of the trading day for training, final 30% for out-of-sample evaluation). N ≈ 55,600 second-level observations per ticker.
+The OFI study below is the **corrected panel study**. It supersedes the original
+Iteration 1 / 2 / 3, Research Question 4 and Addition 2 sections, which have been removed
+rather than annotated — see "What was removed and why" at the end of this section.
+
+Data: 5 tickers (AAPL, AMZN, ETSY, NFLX, WDAY) × 7 dates, regular session only,
+quote-validity-filtered, on a book reconstruction verified free of the `uint32_t` underflow
+bug. Full detail: [`results/OFI_STUDY.md`](results/OFI_STUDY.md).
 
 ---
 
-### Iteration 1 — Baseline: Raw OFI vs. 1-Second Forward Returns
+### Contemporaneous OFI → return (construction validation)
 
-The first experiment replicates the core result of Cont, Kukanov & Stoikov (2014): does Level-1 OFI predict the next second's mid-price return?
+Does the reconstructed OFI move with contemporaneous mid-price returns, as theory requires?
+This is a **validation that the book reconstruction is correct**, not a predictive result.
 
-| Ticker | β (coef) | R²\_in-sample | R²\_out-of-sample |
-|---|---|---|---|
-| AMZN | 2.44 × 10⁻⁸ | 0.04% | **+0.07%** |
-| AAPL | 1.65 × 10⁻⁹ | ~0.00% | −0.18% |
+| Ticker | R² (7-date panel, pooled) |
+|---|---|
+| AAPL | 0.5579 |
+| AMZN | 0.3361 |
+| NFLX | 0.3003 |
+| WDAY | 0.2436 |
+| ETSY | 0.1899 |
 
-AMZN shows a small but positive out-of-sample R² — the model generalizes slightly better than the mean. AAPL's R² is effectively zero, with a slightly negative OOS value indicating the linear model has no edge over a naive forecast.
+The liquidity gradient runs in the direction theory predicts (AAPL highest, ETSY lowest) and is
+consistent with the single-date table, though the NFLX/WDAY mid-ranking is noisy at single-date
+resolution. **Do not read these as forecasting numbers** — contemporaneous R² measures whether
+order flow and price move together within the same interval, which they must.
 
-The asymmetry is consistent with the liquidity hypothesis: AAPL is one of the most heavily traded US equities, with extremely tight spreads and fast order book replenishment, meaning that any OFI signal is arbitraged away before the next 1-second interval. AMZN, while also liquid, exhibits slightly slower signal decay.
+### Predictive OFI → 1-second forward return
 
----
+The honest predictive test: train on the 4 earliest dates, test on the 3 latest (~2 months
+apart), HAC(5) standard errors. This is a **cross-regime** split, deliberately not walk-forward
+— the panel has no daily contiguity.
 
-### Iteration 2 — Normalized OFI: Does Scaling by Trade Size Help?
+| Ticker | pooled R²_out |
+|---|---|
+| AMZN | +0.0062 |
+| NFLX | +0.0037 |
+| ETSY | +0.0017 |
+| AAPL | +0.0014 |
+| WDAY | −0.0018 |
 
-The feature engine computes a normalized variant of OFI (dividing by average executed trade size in the window) to make the signal more comparable across time-of-day and volume regimes. The hypothesis: normalization removes scale confounding and improves out-of-sample fit.
+Across all 15 ticker × test-date cells, R²_out ranges from **−0.0077 to +0.0069**.
 
-**Result: normalization consistently hurts.**
+**Every coefficient is HAC(5)-significant (p < 0.05, most p < 0.0001) — and that is a statement
+about sample size (N = 35k–88k), not about economic content.** The effect is negligible for all
+five tickers. There is no tradeable OFI signal here at a 1-second horizon, and the statistical
+significance should not be mistaken for one.
 
-| Ticker | Horizon | Raw OFI R²\_out | Norm OFI R²\_out | ΔR²\_out |
-|---|---|---|---|---|
-| AMZN | 1s | +0.07% | −0.48% | −0.55% |
-| AAPL | 1s | −0.18% | −4.73% | −4.55% |
-| AMZN | 10s | −0.35% | −6.96% | −6.61% |
-| AAPL | 10s | −0.05% | −23.6% | −23.6% |
+### What was removed and why
 
-Normalized OFI fits the training set better in-sample (R²\_in goes from 0.04% → 0.29% for AMZN at 1s), but generalizes far worse. This is a textbook overfitting signature: the normalization term amplifies noise in low-volume periods, producing large-magnitude features that the OLS model latches onto during training. The raw OFI signal, despite its scale dependency, is the more robust predictor.
+The original research section reported: Iteration 1 (raw OFI baseline, AAPL R²_out −0.18% /
+AMZN +0.07%), Iteration 2 (normalized OFI), Iteration 3 (10-second horizon decay),
+Research Question 4 (cross-asset SPY → AAPL lead-lag), and Addition 2 (multi-frequency decay
+across 1s/5s/10s/30s/60s).
 
-**Takeaway:** normalization is not free — it trades generalization for in-sample fit. Raw OFI is preferred for live prediction.
+All of it was computed on data with three independent, disqualifying defects:
 
----
+1. **Corrupted book reconstruction** — a `uint32_t` underflow bug meant `ofi` and `mid_price`
+   were both derived from a broken book. The original contemporaneous R² landing in a plausible
+   literature range (≈0.35–0.45) was coincidence, not confirmation.
+2. **Within-day 70/30 split** — training on the first 70% of a single trading day and testing on
+   the last 30% crosses the intraday U-shape regime boundary, so train and test are drawn from
+   structurally different liquidity regimes.
+3. **58% undisclosed extended-hours data** in the underlying sample.
 
-### Iteration 3 — Horizon Decay: Does the Signal Persist at 10 Seconds?
+Iterations 1 and 3 and Addition 2 are superseded by the predictive panel table above.
+**Iteration 2 (normalized OFI) and Research Question 4 (cross-asset SPY → AAPL) have no
+corrected equivalent — they were not re-run on the clean panel, so no result is claimed for
+either.** The normalization-hurts conclusion and the no-lead-lag conclusion are both currently
+unsupported; they may well be true, but nothing in this repository demonstrates them.
 
-The same raw OFI regression is run at a 10-second forward-return horizon to test signal decay.
-
-| Ticker | 1s R²\_out | 10s R²\_out | Decay |
-|---|---|---|---|
-| AMZN | +0.07% | −0.35% | Signal disappears |
-| AAPL | −0.18% | −0.05% | Already gone at 1s |
-
-AMZN's OFI signal — already small at 1 second — is completely gone by 10 seconds. This is consistent with the price impact literature: order flow imbalance is incorporated into prices within seconds in a modern electronic market. At 10-second horizons the dominant noise source is mid-frequency volatility, which OFI does not capture.
-
----
-
-### Research Question 4 — Cross-Asset OFI (SPY → AAPL)
-
-The hypothesis is that a large, liquid ETF such as SPY carries information about its constituent stocks before that information is fully incorporated into individual stock prices. If SPY order flow leads AAPL, then lagged SPY OFI should add predictive power over AAPL's own OFI for forecasting AAPL 1-second returns.
-
-Five models are compared on the matched cross-asset dataset (N=17,545 joint observations, 70/30 time-series split):
-
-| Model | Predictors | R²\_in | R²\_out | ΔR²\_out vs baseline |
-|---|---|---|---|---|
-| AAPL OFI (baseline) | AAPL OFI only | 0.02% | −0.87% | — |
-| SPY OFI lag-1 | SPY OFI (t−1) only | 0.05% | −1.56% | −0.70% |
-| SPY OFI lag-2 | SPY OFI (t−2) only | 0.22% | −8.82% | −7.96% |
-| AAPL OFI + SPY lag-1 | AAPL OFI + SPY (t−1) | 0.07% | −2.02% | −1.16% |
-| AAPL OFI + SPY lag-1+2 | AAPL OFI + SPY (t−1,t−2) | 0.23% | −9.12% | −8.25% |
-
-Adding lagged SPY OFI does not improve out-of-sample R² for AAPL — every cross-asset specification performs worse than the AAPL-only baseline. The SPY lag-2 model in particular shows a large positive in-sample R² (0.22%) alongside a steeply negative OOS R² (−8.82%), a clear overfitting signature. This result is consistent with markets where cross-asset information transmission between SPY and AAPL occurs at sub-second timescales faster than the 1-second aggregation window used here: by the time a 1-second SPY OFI bar is recorded, any predictive content for AAPL prices has already been arbitraged away. No evidence of a lagged lead-lag relationship is found at this frequency.
-
----
-
-### Addition 2 — Multi-Frequency Signal Decay
-
-OFI is re-aggregated at five horizons (1s, 5s, 10s, 30s, 60s) and used to predict the corresponding forward return. This tests whether the OFI signal is more persistent for a less-liquid name (AMZN) relative to a hyper-liquid one (AAPL).
-
-| Horizon | AAPL R²\_out | AMZN R²\_out |
-|---|---|---|
-| 1s | −0.18% | +0.07% |
-| 5s | −0.50% | +0.23% |
-| 10s | −1.40% | −0.14% |
-| 30s | −0.72% | −2.03% |
-| 60s | +1.51% | −1.78% |
-
-![OFI Signal Decay](results/signal_decay.png)
-
-The results are consistent with the baseline findings but do not support the hypothesis of monotonically higher AMZN R² at short horizons relative to AAPL. AMZN does show positive OOS R² at 1s and 5s (the only positive values in the table), while AAPL is negative or near-zero across all horizons — consistent with AAPL's tighter spreads and faster arbitrage. However, both tickers deteriorate sharply by 10s and beyond, with R² becoming more negative at longer aggregations where sample size shrinks and noise dominates. The isolated +1.51% at 60s for AAPL is likely a sample-size artifact (N=959 test observations) rather than a genuine signal. Overall, any OFI predictability is confined to the 1–5 second window, and even there the effect is small and fragile.
+`results/signal_decay.png` was generated from the stale data and has been left in place only as
+a build artifact; it is not a result.
 
 ---
 
@@ -235,6 +243,13 @@ Spearman rank correlations between realized variance and quoted spread:
 | AAPL | −0.386 | < 10⁻³⁰⁰ |
 
 **Note on sign:** the negative correlation appears to contradict Glosten-Milgrom, but is largely an artifact of how quoted spread behaves during the open and close auctions (where the book is thin and spreads are mechanically near zero) coinciding with high realized variance from overnight gaps. During continuous trading hours, within-quintile median spreads are more stable. A cleaner test would restrict to the 9:45–15:45 core trading window and use intraday realized variance. This is a known limitation of the current implementation and a planned improvement.
+
+> **⚠️ Same data vintage as the removed OFI sections.** `docs/FINAL_NUMBERS.md` does not list
+> this result as retired, so it is left in place — but both inputs (quoted spread and realized
+> variance) come from the same book reconstruction and the same undisclosed-extended-hours
+> sample as the OFI work removed above, and this test was **not re-run on the clean 7-date
+> panel**. Treat the ρ values as unverified pending a re-run. The stated open/close-auction
+> confound is a second, independent reason not to cite the sign.
 
 ---
 
