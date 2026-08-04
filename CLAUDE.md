@@ -1,14 +1,13 @@
 # lob-engine
 
 Benchmarked C++17 Nasdaq ITCH 5.0 limit order book reconstruction engine. Its
-benchmark numbers (BM_FullPipeline: 16.93ns p50 / 17.17ns mean **per operation**;
-~19.5M msg/s end-to-end; 268,744,780 ITCH message frames) are on the user's resume
-— **nothing about them may silently regress**.
+headline benchmark numbers (BM_FullPipeline: 16.93ns p50 / 17.17ns mean **per operation**;
+~19.5M msg/s end-to-end; 268,744,780 ITCH message frames) are load-bearing —
+**nothing about them may silently regress**.
 
 `docs/FINAL_NUMBERS.md` is the single source of truth for every number in this
 project; `bench/BASELINE.md` is the source for benchmark methodology and raw
-measurements. **No number goes on a resume, in a README, or into a commit message
-unless it appears in FINAL_NUMBERS.md first.**
+measurements. **No number leaves this repo unless it appears in FINAL_NUMBERS.md first.**
 
 RETIRED — never cite: the "226M messages / 7.8M msg/s / 29.0 s" end-to-end claim
 (the parser had no ticker filtering at that commit), all pre-harness-fix latency
