@@ -116,13 +116,26 @@ Measured on Apple Silicon (arm64), single core, release build (`-O2`), via the g
 harness described in [Benchmark methodology](#benchmark-methodology) below. Full detail,
 methodology, and reproduction steps: [`bench/BASELINE.md`](bench/BASELINE.md).
 
-Headline figure — `BM_FullPipeline` (the dominant message type, ~60% of ITCH traffic):
+Headline figure — `BM_FullPipeline`, a synthetic add/execute/delete cycle against an
+in-memory book:
 
-| Metric | Value |
-|---|---|
-| Mean per-message latency | 17.17 ns |
-| Median (p50) per-message latency | 16.93 ns |
-| Whole-file parse throughput, unfiltered (real main-feed data, 2019-12-30) | 18.4-18.8M msg/s (263.24M messages) |
+| Metric | Value | What it covers |
+|---|---|---|
+| Mean per-**operation** latency | 17.17 ns | One `OrderBook` pipeline op, grouped-batch timed (GROUP_SIZE=128) |
+| Median (p50) per-**operation** latency | 16.93 ns | Same run; p50 cv ≤2.81% across all 8 benchmarks |
+| Whole-file parse throughput, unfiltered (real main-feed data, 2019-12-30) | 18.4–18.8M msg/s (263.24M messages) | Parse only — no `OrderBook`/`FeatureEngine` reconstruction |
+| Real end-to-end throughput, post locate-scan early-exit | ~19.5M msg/s; 14.68 s average full run | Locate resolution + parse + reconstruct + write, single-ticker filtered, averaged over the 5 study tickers |
+
+**These are different quantities and must not be conflated.** The per-operation figures
+measure book operations on a synthetic in-memory workload; parse, dispatch, feature
+computation and CSV write are all outside them. The end-to-end run is 268,744,780 message
+frames in 14.68 s, i.e. **~54.6 ns per message** — the residual over the 16.93 ns book op is
+parse, dispatch and bookkeeping, which this project has **not** decomposed. Do not present
+16.93 ns as a per-message number.
+
+Only **mean and p50** are citable. p99/p999 are retired as unmeasurable on this host — p99 cv
+is 27–97% on 6 of 8 benchmarks, p999 cv 18–108% on all 8. See
+[`docs/FINAL_NUMBERS.md`](docs/FINAL_NUMBERS.md).
 
 The previous "226M messages / 7.8M msg/s / 29.0s end-to-end" row has been retired (2026-07-25)
 — it doesn't correspond to a measurement this codebase's single-instrument `OrderBook`
