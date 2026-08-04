@@ -78,7 +78,7 @@ can silently corrupt output, then performance.
 
 ---
 
-## Unverified resume claim (not a finding — a gap)
+## Unverified throughput claim (not a finding — a gap)
 
 **226M messages / 7.8M msg/s / 29.0s end-to-end throughput (README.md) is NOT reproducible on this machine** — no raw ITCH `.bin`/`.NASDAQ_ITCH50` file is present locally (`data/` only has derived CSVs; `download_itch.sh` pulls 5-12GB/day files from Nasdaq's public archive, none cached). The microbenchmark numbers (41-84ns/op) don't cleanly prove or disprove this claim either way — real single-ticker replay is dominated by mostly-miss D/E/U lookups for other tickers (cheap, not exercised by the always-hit microbenchmarks) plus per-message parse overhead paid regardless of ticker, so a naive ceiling calculation from the microbenchmarks is not a valid disproof. **Action needed:** download one real ITCH day file and rerun `./lob_engine <file> <TICKER> <output.csv>` to actually verify this number; update `bench/BASELINE.md` once done.
 
